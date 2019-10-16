@@ -1,0 +1,8 @@
+Fabrice Bellard - original code of RISC-V emulator:
+https://bellard.org/tinyemu/
+
+Frank Buss - simplified emulator for RV32I capable of passing compliance tests:
+https://gist.github.com/FrankBuss/c974e59826d33e21d7cad54491ab50e8
+
+Alexander Shabarshin - maintainer of this nedoPC-5 project:
+https://gitlab.com/nedopc/npc5
