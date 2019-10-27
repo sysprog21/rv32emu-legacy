@@ -2144,6 +2144,8 @@ int main(int argc, char** argv)
 
     /* run program in emulator */
     pc = ram_start;
+    /* Initialize the address of stack pointer*/
+    reg[2] = ram_start + RAM_SIZE - 4;
     riscv_cpu_interp_x32();
 
     uint64_t ns2 = get_clock();
