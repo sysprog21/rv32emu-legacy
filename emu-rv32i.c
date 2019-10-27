@@ -326,16 +326,39 @@ uint32_t load_res; /* for atomic LR/SC */
 #define MSTATUS_UXL_MASK ((uint64_t)3 << MSTATUS_UXL_SHIFT)
 #define MSTATUS_SXL_MASK ((uint64_t)3 << MSTATUS_SXL_SHIFT)
 
-int ctz32(uint32_t a)
+static inline int ctz32(uint32_t val)
 {
-    int i;
-    if (a == 0)
-        return 32;
-    for(i = 0; i < 32; i++) {
-        if ((a >> i) & 1)
-            return i;
+#if defined(__GNUC__) && __GNUC__ >= 4
+    return val ? __builtin_ctz(val) : 32;
+#else
+    /* Binary search for the trailing one bit.  */
+    int cnt;
+    cnt = 0;
+    if (!(val & 0x0000FFFFUL)) {
+        cnt += 16;
+        val >>= 16;
     }
-    return 32;
+    if (!(val & 0x000000FFUL)) {
+        cnt += 8;
+        val >>= 8;
+    }
+    if (!(val & 0x0000000FUL)) {
+        cnt += 4;
+        val >>= 4;
+    }
+    if (!(val & 0x00000003UL)) {
+        cnt += 2;
+        val >>= 2;
+    }
+    if (!(val & 0x00000001UL)) {
+        cnt++;
+        val >>= 1;
+    }
+    if (!(val & 0x00000001UL)) {
+        cnt++;
+    }
+    return cnt;
+#endif
 }
 
 #define SSTATUS_MASK0 (MSTATUS_UIE | MSTATUS_SIE |       \
