@@ -933,6 +933,7 @@ int target_write_u32(uint32_t addr, uint32_t val)
     } else {
         addr -= ram_start;
         if (addr > RAM_SIZE - 4)  {
+            printf("illegal write 32, PC: 0x%08x, address: 0x%08x\n", pc, addr + ram_start);
             return 1;
         } else {
             uint8_t* p = ram + addr;
