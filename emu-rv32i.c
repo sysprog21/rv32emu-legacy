@@ -199,6 +199,9 @@ uint64_t mtimecmp;
 /* virtual start address for index 0 in the ram array */
 uint32_t ram_start;
 
+/* program entry point */
+uint32_t start;
+
 /* last byte of the memory initialized and temporary value */
 uint32_t ram_last = 0;
 uint32_t ram_curr = 0;
@@ -2035,12 +2038,12 @@ int main(int argc, char** argv)
 
                 /* for compliance test */
                 if (strcmp(name, "_start") == 0) {
-                    ram_start = sym.st_value;
+                    start = sym.st_value;
                 }
 
                 /* for zephyr */
                 if (strcmp(name, "__reset") == 0) {
-                    ram_start = sym.st_value;
+                    start = sym.st_value;
                 }
                 if (strcmp(name, "__irq_wrapper") == 0) {
                     mtvec = sym.st_value;
@@ -2048,13 +2051,32 @@ int main(int argc, char** argv)
             }
         }
     }
+
+    /* set .text segment as the base address */
+    scn = NULL;
+    size_t shstrndx;
+    elf_getshdrstrndx(elf, &shstrndx);
+    while ((scn = elf_nextscn(elf, scn)) != NULL) {
+        gelf_getshdr(scn, &shdr);
+        const char *name = elf_strptr(elf, shstrndx, shdr.sh_name);
+
+        if (shdr.sh_type == SHT_PROGBITS) {
+            if (strcmp(name, ".text") == 0) {
+              ram_start = shdr.sh_addr;
+              break;
+            }
+        }
+    }
+
 #ifdef DEBUG_OUTPUT
     printf("begin_signature: 0x%08x\n", begin_signature);
     printf("end_signature: 0x%08x\n", end_signature);
-    printf("start: 0x%08x\n", ram_start);
+    printf("ram_start: 0x%08x\n", ram_start);
+    printf("entry point: 0x%08x\n", start);
 #endif
 
     /* scan for program */
+    scn = NULL;
     while ((scn = elf_nextscn(elf, scn)) != NULL) {
         gelf_getshdr(scn, &shdr);
         if (shdr.sh_type == SHT_PROGBITS) {
@@ -2143,7 +2165,8 @@ int main(int argc, char** argv)
     uint64_t ns1 = get_clock();
 
     /* run program in emulator */
-    pc = ram_start;
+    pc = start;
+    reg[2] = ram_start + RAM_SIZE;
     riscv_cpu_interp_x32();
 
     uint64_t ns2 = get_clock();
