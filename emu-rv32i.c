@@ -1092,12 +1092,6 @@ void execute_instruction()
             } else {
                 debug_out(">>> BGE\n");
                 stats[7]++;
-            }
-#endif
-            cond = ((int32_t) reg[rs1] < (int32_t) reg[rs2]);
-            break;
-        case 3: /* bltu/bgeu */
-#ifdef DEBUG_EXTRA
             if (!(funct3 & 1)) {
                 debug_out(">>> BLTU\n");
                 stats[8]++;
