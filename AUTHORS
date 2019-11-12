@@ -1,3 +1,6 @@
+rv32emu is maintained by National Cheng Kung University, based on the
+following efforts:
+
 Fabrice Bellard - original code of RISC-V emulator:
 https://bellard.org/tinyemu/
 

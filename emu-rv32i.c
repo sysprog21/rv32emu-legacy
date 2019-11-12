@@ -1,74 +1,8 @@
-/* Modified by Shaos <me@shaos.net>
-   24-DEC-2018 - Find top 5 instructions in DEBUG_EXTRA mode
-   20-DEC-2018 - More statistical points
-   22-NOV-2018 - Added saving HEX file with copy of the code in DEBUG_OUTPUT mode
-   21-NOV-2018 - Some statistics added in DEBUG_EXTRA mode
-   20-NOV-2018 - By default RV32M and RV32A extensions are disabled (STRICT_RV32I)
-   18-NOV-2018 - Slghtly modified for pure C
-   Source code taken from https://gist.github.com/FrankBuss/c974e59826d33e21d7cad54491ab50e8
-*/
-
 /*
-RISCV emulator for the RV32I architecture
-based on TinyEMU by Fabrice Bellard, see https://bellard.org/tinyemu/
-stripped down for RV32I only, all "gotos" removed, and fixed some bugs for the compliance test
-by Frank Buss, 2018
-
-Requires libelf-dev:
-
-sudo apt-get install libelf-dev
-
-
-Compile it like this:
-
-gcc -O3 -Wall -lelf emu-rv32i.c -o emu-rv32i
-
-
-It is compatible to Spike for the command line arguments, which means you can run
-the compliance test from https://github.com/riscv/riscv-compliance like this:
-
-make RISCV_TARGET=spike RISCV_DEVICE=rv32i TARGET_SIM=/full/path/emulator variant
-
-It is also compatible with qemu32, as it is used for Zephyr. You can compile the
-Zephyr examples for qemu like this:
-
-cd zephyr
-source zephyr-env.sh
-cd samples/synchronization
-mkdir build && cd build
-cmake -GNinja -DBOARD=qemu_riscv32 ..
-ninja
-
-After this you can run it with the emulator like this:
-
-emu-rv32i zephyr/zephyr.elf
-
-
-original copyright:
-*/
-
-/*
- * RISCV emulator
+ * A minimalist RISC-V emulator for the RV32I architecture.
  *
- * Copyright (c) 2016 Fabrice Bellard
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
+ * rv32emu  is freely redistributable under the MIT License. See the file
+ * "LICENSE" for information on usage and redistribution of this file.
  */
 
 #define XLEN 32

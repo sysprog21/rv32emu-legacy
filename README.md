@@ -1,7 +1,7 @@
 # RISC-V RV32I[MA] emulator with ELF support
 
-Emulator was originally created by Fabrice Bellard and then modified and shared on Hackaday by Frank Buss
-as a single C-file. Shaos added some additional statistics and macros.
+This is a RISC-V emulator for the RV32I architecture, based on [TinyEMU](https://bellard.org/tinyemu/)
+and stripped down for RV32I only.
 
 Requires libelf-dev:
 ```shell
