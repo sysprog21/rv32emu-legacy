@@ -917,9 +917,8 @@ uint32_t divu32(uint32_t a, uint32_t b)
 {
     if (b == 0) {
         return -1;
-    } else {
-        return a / b;
     }
+    return a / b;
 }
 
 int32_t rem32(int32_t a, int32_t b)
@@ -928,18 +927,16 @@ int32_t rem32(int32_t a, int32_t b)
         return a;
     } else if (a == ((int32_t) 1 << (XLEN - 1)) && b == -1) {
         return 0;
-    } else {
-        return a % b;
     }
+    return a % b;
 }
 
 uint32_t remu32(uint32_t a, uint32_t b)
 {
     if (b == 0) {
         return a;
-    } else {
-        return a % b;
     }
+    return a % b;
 }
 
 static uint32_t mulh32(int32_t a, int32_t b)
@@ -1599,10 +1596,10 @@ void execute_instruction()
                     return;
                 }
                 /*
-                    compliance test specific: if bit 0 of gp (x3) is 0, it is a
-                   syscall, otherwise it is the program end, with the exit code
-                   in the bits 31:1
-                */
+                 * compliance test specific: if bit 0 of gp (x3) is 0, it is a
+                 * syscall, otherwise it is the program end, with the exit code
+                 * in the bits 31:1
+                 */
                 if (begin_signature) {
                     if (reg[3] & 1) {
                         debug_out("program end, result: %04x\n", reg[3] >> 1);
