@@ -2053,7 +2053,7 @@ int main(int argc, char** argv)
         }
     }
 
-    /* set .text segment as the base address */
+    /* set .text section as the base address */
     scn = NULL;
     size_t shstrndx;
     elf_getshdrstrndx(elf, &shstrndx);
@@ -2081,7 +2081,7 @@ int main(int argc, char** argv)
     while ((scn = elf_nextscn(elf, scn)) != NULL) {
         gelf_getshdr(scn, &shdr);
 
-        /* filter NULL address segments and .bss */
+        /* filter NULL address sections and .bss */
         if (shdr.sh_addr && shdr.sh_type != SHT_NOBITS) {
             Elf_Data *data = elf_getdata(scn, NULL);
             if (shdr.sh_addr >= ram_start) {
