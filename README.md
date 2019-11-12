@@ -13,9 +13,12 @@ How to compile it:
 $ gcc -O3 -Wall -lelf emu-rv32i.c -o emu-rv32i
 ```
 
-Passed RV32I compliance tests from https://github.com/riscv/riscv-compliance
+Run RV32I compliance tests.
+Assume `emu-rv32i` in `$PATH` environment variable.
 ```shell
-$ make RISCV_TARGET=spike RISCV_DEVICE=rv32i TARGET_SIM=/full/path/emulator variant
+$ git clone https://github.com/riscv/riscv-compliance
+$ cd riscv-compliance
+$ make RISCV_PREFIX=riscv-none-embed- RISCV_DEVICE=rv32i TARGET_SIM=emu-rv32i variant
 ```
 
 Compiling and running simple code:
