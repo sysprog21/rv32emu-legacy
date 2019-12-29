@@ -749,12 +749,9 @@ unsigned char get_insn32(uint32_t pc, uint32_t *insn)
     uint32_t ptr = pc - ram_start;
     if (ptr > RAM_SIZE) return 1;
     uint8_t* p = ram + ptr;
-#ifdef DEBUG_OUTPUT
-    printf("address %08x\n", p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
-#endif
 #ifdef RV32C
     if((p[0] & 0x03) < 3){
-        *insn = (p[0] | ((p[1] << 8) & 0x0000ffff));
+        *insn = (p[0] | (p[1] << 8)) & 0x0000ffff;
         return CINSN;
     }
 #endif
@@ -1063,6 +1060,22 @@ void execute_instruction()
         opcode = insn & 0x3;
     }
 #endif
+
+    uint16_t midpart;
+
+    if(insn_type == INSN){
+        opcode = insn & 0x7f;
+        rd = (insn >> 7) & 0x1f;
+        rs1 = (insn >> 15) & 0x1f;
+        rs2 = (insn >> 20) & 0x1f;
+    }
+
+#ifdef RV32C
+    if(insn_type == CINSN){
+        opcode = insn & 0x3;
+    }
+#endif
+
 
 
 
@@ -1925,6 +1938,69 @@ void execute_instruction()
                 val = reg[rs1] + imm;
                 break;
             }
+        break;
+    case 1:
+        funct3 = (insn >> 13) & 0x7;
+        midpart = (insn >> 2) & 0x07ff;
+        switch(funct3){
+        case 0: /* C.NOP, C.ADDI */
+            if( ((midpart >> 5) & 0x1f)  == 0){ /* C.NOP*/
+                return;
+            } else {
+                rs1 = rd = (midpart >> 5) & 0x1f;
+                imm = (midpart & 0x1f) | ((midpart >> 5) &  0x20);
+                val = reg[rs1] + imm;
+            }
+            break;
+        case 1: /* C.JAL, C.ADDIW */
+            switch(XLEN){
+            case 32:
+                imm = (midpart & 0x400) |
+                      ((midpart << 3) & 0x200) |
+                      (midpart & 0x170) |
+                      ((midpart << 2) & 0x40) |
+                      (midpart & 0x20) |
+                      ((midpart << 4) & 0x10) |
+                      ((midpart >> 6) & 0x8) |
+                      ((midpart >> 1) & 0x7);
+                imm = imm & 0xfffe;
+                if (rd != 0)
+                    reg[1] = pc + 2; /* Store the link to x1 register */
+                next_pc = (int32_t)(pc + imm);
+                if(next_pc > pc) forward_counter++;
+                else backward_counter++;
+                jump_counter++;
+                break;
+            case 64:
+            case 128:
+                rs1 = rd = (midpart >> 5) & 0x1f;
+                imm = (midpart >> (11 - 5)) |
+                      midpart & 0x1f;
+                val = reg[rs1] + imm;
+                break;
+            }
+            break;
+        case 2: /* C.LI */
+            break;
+        case 3: /* C.ADDI16SP, C.LUI */
+            break;
+        case 4: /* C.SRLI, C.SRLI64, C.SRAI, C.SRAI64, C.ANDI, C.SUB, C.XOR, C.OR, C.AND, C.SUBW, C.ADDW*/
+            break;
+        case 5: /* C.J */
+            break;
+        case 6: /* C.BEQZ */
+            break;
+        case 7: /* C.BNEZ */
+            break;
+        default:
+            raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+            return;
+        }
+        if(rd != 0){
+            reg[rd] = val;
+        }
+        break;
+    case 2:
         break;
         case 1: /* C.FLD, C.LQ*/
         {
