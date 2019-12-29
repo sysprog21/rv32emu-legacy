@@ -160,11 +160,17 @@ int machine_running = TRUE;
 #define PRV_H 2
 #define PRV_M 3
 
+/* Instruction state*/
+#define CINSN 1
+#define INSN 0
+unsigned char insn_type;
+
 /* CPU state */
 uint32_t pc;
 uint32_t next_pc;
 uint32_t insn;
 uint32_t reg[32];
+
 
 uint8_t priv = PRV_M; /* see PRV_x */
 uint8_t fs;           /* MSTATUS_FS value */
@@ -703,7 +709,7 @@ int raise_interrupt()
 
 /* read 32-bit instruction from memory by PC */
 
-uint32_t get_insn32(uint32_t pc)
+uint32_t get_insn32(uint32_t pc, uint32_t *insn)
 {
 #ifdef DEBUG_EXTRA
     if (pc && pc < minmemr)
@@ -712,10 +718,16 @@ uint32_t get_insn32(uint32_t pc)
         maxmemr = pc + 3;
 #endif
     uint32_t ptr = pc - ram_start;
-    if (ptr > RAM_SIZE)
-        return 1;
-    uint8_t *p = ram + ptr;
-    return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
+    if (ptr > RAM_SIZE) return 1;
+    uint8_t* p = ram + ptr;
+#ifdef RV32C
+    if((p[0] & 0x03) < 3){
+        *insn = (p[0] | (p[1] << 8)) & 0x0000ffff;
+        return CINSN;
+    }
+#endif
+    *insn = p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
+    return INSN;
 }
 
 /* read 8-bit data from memory */
@@ -1005,10 +1017,22 @@ void execute_instruction()
     int32_t imm, cond, err;
     uint32_t addr, val = 0, val2;
 
-    opcode = insn & 0x7f;
-    rd = (insn >> 7) & 0x1f;
-    rs1 = (insn >> 15) & 0x1f;
-    rs2 = (insn >> 20) & 0x1f;
+    uint16_t midpart;
+
+    if(insn_type == INSN){
+        opcode = insn & 0x7f;
+        rd = (insn >> 7) & 0x1f;
+        rs1 = (insn >> 15) & 0x1f;
+        rs2 = (insn >> 20) & 0x1f;
+    }
+
+#ifdef RV32C
+    if(insn_type == CINSN){
+        opcode = insn & 0x3;
+    }
+#endif
+
+
 
     switch (opcode) {
     case 0x37: /* lui */
@@ -1836,6 +1860,47 @@ void execute_instruction()
         break;
 
 #endif
+#ifdef RV32C
+    /* Compressed insn */
+    case 0:
+        break;
+    case 1:
+        funct3 = (insn >> 13) & 0x7;
+        midpart = (insn >> 2) & 0x07ff;
+        switch(funct3){
+        case 0: /* C.NOP, C.ADDI */
+            if( ((midpart >> 5) & 0x1f)  == 0){ /* C.NOP*/
+                return;
+            } else {
+                rs1 = rd = (midpart >> 5) & 0x1f;
+                imm = (midpart & 0x1f) | ((midpart >> 5) &  0x20);
+                val = reg[rs1] + imm;
+            }
+            break;
+        case 1: /* C.JAL, C.ADDIW */
+            break;
+        case 2: /* C.LI */
+            break;
+        case 3: /* C.ADDI16SP, C.LUI */
+            break;
+        case 4: /* C.SRLI, C.SRLI64, C.SRAI, C.SRAI64, C.ANDI, C.SUB, C.XOR, C.OR, C.AND, C.SUBW, C.ADDW*/
+            break;
+        case 5: /* C.J */
+            break;
+        case 6: /* C.BEQZ */
+            break;
+        case 7: /* C.BNEZ */
+            break;
+        default:
+            raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+            return;
+        }
+        if(rd != 0){
+            reg[rd] = val;
+        }
+        break;
+    case 2:
+        break;
 
     default:
         raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
@@ -1878,8 +1943,15 @@ void riscv_cpu_interp_x32()
         if ((mip & mie) != 0 && (mstatus & MSTATUS_MIE)) {
             raise_interrupt();
         } else {
-            /* normal instruction execution */
-            insn = get_insn32(pc);
+            /* Compressed or normal */
+            insn_type = get_insn32(pc, &insn);
+#ifdef RV32C
+            if(insn_type)
+                next_pc = pc + 2;
+#endif
+#ifdef DEBUG_EXTRA
+            printf("insn : %#x\n", insn);
+#endif
             insn_counter++;
 
             debug_out("[%08x]=%08x, mtime: %lx, mtimecmp: %lx\n", pc, insn,
