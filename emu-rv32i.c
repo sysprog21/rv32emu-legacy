@@ -1878,6 +1878,32 @@ void execute_instruction()
             }
             break;
         case 1: /* C.JAL, C.ADDIW */
+            switch(XLEN){
+            case 32:
+                imm = (midpart & 0x400) |
+                      ((midpart << 3) & 0x200) |
+                      (midpart & 0x170) |
+                      ((midpart << 2) & 0x40) |
+                      (midpart & 0x20) |
+                      ((midpart << 4) & 0x10) |
+                      ((midpart >> 6) & 0x8) |
+                      ((midpart >> 1) & 0x7);
+                imm = imm & 0xfffe;
+                if (rd != 0)
+                    reg[1] = pc + 2; /* Store the link to x1 register */
+                next_pc = (int32_t)(pc + imm);
+                if(next_pc > pc) forward_counter++;
+                else backward_counter++;
+                jump_counter++;
+                break;
+            case 64:
+            case 128:
+                rs1 = rd = (midpart >> 5) & 0x1f;
+                imm = (midpart >> (11 - 5)) |
+                      midpart & 0x1f;
+                val = reg[rs1] + imm;
+                break;
+            }
             break;
         case 2: /* C.LI */
             break;
