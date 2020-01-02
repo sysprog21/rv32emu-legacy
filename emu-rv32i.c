@@ -21,20 +21,9 @@
 #include <libelf.h>
 #include <gelf.h>
 #include <getopt.h>
-<<<<<<< HEAD
 /* uncomment this for an instruction trace and other debug outputs */
 // #define DEBUG_OUTPUT
 // #define DEBUG_EXTRA
-=======
-
-/* uncomment this for an instruction trace and other debug outputs */
-#if 0
-#define DEBUG_OUTPUT
-#endif
-#if 0
-#define DEBUG_EXTRA
-#endif
->>>>>>> Add the new function for signature validation
 
 #define STRICT_RV32I
 #define FALSE (0)
