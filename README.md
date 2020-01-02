@@ -1,4 +1,4 @@
-# RISC-V RV32I[MA] emulator with ELF support
+# RISC-V RV32I[MAC] emulator with ELF support
 
 This is a RISC-V emulator for the RV32I architecture, based on [TinyEMU](https://bellard.org/tinyemu/)
 and stripped down for RV32I only.
