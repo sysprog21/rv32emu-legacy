@@ -18,7 +18,9 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
-
+#include <libelf.h>
+#include <gelf.h>
+#include <getopt.h>
 /* uncomment this for an instruction trace and other debug outputs */
 // #define DEBUG_OUTPUT
 // #define DEBUG_EXTRA
@@ -1893,14 +1895,14 @@ void execute_instruction()
 #endif
                 return;
             } else {
-#ifdef DEBUG_EXTRA
-                dprintf(">>> C.ADDI\n");
-#endif
-                rs1 = rd = ((midpart >> 5) & 0x1f) + 8;
+                rs1 = rd = ((midpart >> 5) & 0x1f);
                 imm = (midpart & 0x1f) | ((midpart >> 5) &  0x20);
                 val = reg[rs1] + imm;
-            }
-            break;
+#ifdef DEBUG_EXTRA
+                dprintf(">>> C.ADDI\n");
+                printf("rd: %d, rs1: %d, imm: %d, reg[rd]: %d, val: %d\n", rd, rs1, imm, reg[rd], val);
+#endif
+            }break;
         case 1: /* C.JAL, C.ADDIW */
 #ifdef DEBUG_EXTRA
             switch(XLEN){
@@ -1926,9 +1928,8 @@ void execute_instruction()
                       ((midpart << 4) & 0x10) |
                       ((midpart >> 6) & 0x8) |
                       ((midpart >> 1) & 0x7);
-                imm = imm & 0xfffe;
-                if (rd != 0)
-                    reg[1] = pc + 2; /* Store the link to x1 register */
+                imm = (imm << 1) & 0xfffe;
+                reg[1] = pc + 2; /* Store the link to x1 register */
                 next_pc = (int32_t)(pc + imm);
                 if(next_pc > pc) forward_counter++;
                 else backward_counter++;
@@ -1950,7 +1951,6 @@ void execute_instruction()
             rs1 = rd = ((midpart >> 5) & 0x1f);
             imm = ((midpart >> 5) & 0x20) | (midpart & 0x1f);
             val = imm;
-            printf("%08x, rd: %d\n", val, rd);
             break;
         case 3: /* C.ADDI16SP, C.LUI */
 #ifdef DEBUG_EXTRA
@@ -1962,15 +1962,14 @@ void execute_instruction()
                 dprintf(">>> C.LUI\n");
             }
 #endif
-            rs1 = rd = ((midpart >> 5) & 0x1f);
-            switch(rd){
+            switch(rd){ /* C.ADDI16SP */
             case 2:
                 imm = ((midpart >> 4) & 0x1) |
                       ((midpart << 1) & 0x2) |
-                      ((midpart)      & 0x8) |
-                      ((midpart << 2) & 0xc) |
-                      ((midpart >> 5) & 0x10);
-                imm = imm << 4;
+                      ((midpart >> 1) & 0x4) |
+                      ((midpart << 2) & 0x18) |
+                      ((midpart >> 5) & 0x20);
+                imm = (imm << 4 )<< (31 - 9) >> (31 - 9);
                 val = reg[rd] + imm;
                 break;
             default:
@@ -2175,6 +2174,25 @@ void execute_instruction()
         }
         break;
     case 2:
+        funct3 = (insn >> 13) & 0x7;
+        midpart = (insn >> 2) & 0x07ff;
+        switch(funct3){
+        case 6:
+#ifdef DEBUG_EXTRA
+            dprintf(">>> C.SWSP\n");
+#endif
+            rs2 = midpart & 0x1f;
+            imm = ((midpart >> 2) & 0x1e0) |
+                  ((midpart << 4) & 0x600);
+            imm = (imm >> 3) & 0xff;
+            addr = reg[2] + imm;
+            val = reg[rs2];
+            if (target_write_u32(addr, val)) {
+                raise_exception(pending_exception, pending_tval);
+                return;
+            }
+            break;
+        }
         break;
 
     default:
@@ -2256,16 +2274,31 @@ int main(int argc, char **argv)
 
     /* automatic STDOUT flushing, no fflush needed */
     setvbuf(stdout, NULL, _IONBF, 0);
-
     /* parse command line */
-    const char *elf_file = NULL;
-    const char *signature_file = NULL;
-    for (int i = 1; i < argc; i++) {
-        char *arg = argv[i];
-        if (arg == strstr(arg, "+signature=")) {
-            signature_file = arg + 11;
-        } else if (arg[0] != '-') {
-            elf_file = arg;
+    const char* elf_file = NULL;
+    const char* signature_file = NULL;
+    const char* output_file = NULL;
+    int cmd_opt = 0;
+    struct option opts[] = {
+        {"elf", 1, NULL, 'e'},
+        {"signature", 1, NULL, 's'},
+        {"output", 1, NULL, 'o'}
+    };
+    const char* optstring = "e:s:o:";
+    while((cmd_opt = getopt_long(argc, argv, optstring, opts, NULL)) != -1){
+        switch(cmd_opt){
+            case 'e':
+                elf_file = optarg;
+                break;
+            case 's':
+                signature_file = optarg;
+                break;
+            case 'o':
+                output_file = optarg;
+                break;
+            default:
+                printf("Unknow argument: %s\n", optarg);
+                break;
         }
     }
     if (elf_file == NULL) {
@@ -2446,17 +2479,51 @@ int main(int argc, char **argv)
     uint64_t ns2 = get_clock();
 
     /* write signature */
+    /* Check signature */
     if (signature_file) {
-        FILE *sf = fopen(signature_file, "w");
+        FILE* sf = fopen(signature_file, "r");
+        if(sf == NULL){
+            printf("Error opening file\n");
+            return -1;
+        }
         int size = end_signature - begin_signature;
-        for (int i = 0; i < size / 16; i++) {
-            for (int j = 0; j < 16; j++) {
-                fprintf(sf, "%02x", ram[begin_signature + 15 - j - ram_start]);
+        char temp[50], ans[50];
+        uint32_t tb = begin_signature;
+        int err = 0;
+        for(int i=0;i<size/ 4; i++){
+            if(fgets(ans, 30, sf) == NULL)
+                break;
+            for(int j = 0;j < 4;j++){
+                sprintf(temp + strlen(temp), "%02x", ram[tb + 3 - j - ram_start]);
             }
-            begin_signature += 16;
-            fprintf(sf, "\n");
+            tb += 4;
+            if(strncmp(temp, ans, 8) != 0){
+                printf("%s -----> %s\n", temp, ans);
+                err++;
+            }else{
+                printf("%s\n", temp);
+            }
+            memset(temp, '\0', 50);
+        }
+        if(err == 0){
+            printf("%s TEST PASSED\n", elf_file);
+        }else{
+            printf("%s TEST FAILED\n", elf_file);
+            printf("Number of failed signature : %d\n", err);
         }
         fclose(sf);
+    }
+    if (output_file) {
+        FILE* of = fopen(output_file, "w");
+        int size = end_signature - begin_signature;
+        for (int i = 0; i < size / 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                fprintf(of, "%02x", ram[begin_signature + 3 - j - ram_start]);
+            }
+            begin_signature += 4;
+            fprintf(of, "\n");
+        }
+        fclose(of);
     }
 
 #ifdef DEBUG_EXTRA

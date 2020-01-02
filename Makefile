@@ -7,7 +7,6 @@ CFLAGS = -O3 -Wall
 LDFLAGS = -lelf
 
 all: $(BINS)
-	
 emu-rv32i: emu-rv32i.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
