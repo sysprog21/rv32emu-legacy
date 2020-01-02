@@ -21,9 +21,20 @@
 #include <libelf.h>
 #include <gelf.h>
 #include <getopt.h>
+<<<<<<< HEAD
 /* uncomment this for an instruction trace and other debug outputs */
 // #define DEBUG_OUTPUT
 // #define DEBUG_EXTRA
+=======
+
+/* uncomment this for an instruction trace and other debug outputs */
+#if 0
+#define DEBUG_OUTPUT
+#endif
+#if 0
+#define DEBUG_EXTRA
+#endif
+>>>>>>> Add the new function for signature validation
 
 #define STRICT_RV32I
 #define FALSE (0)
@@ -751,7 +762,6 @@ unsigned char get_insn32(uint32_t pc, uint32_t *insn)
     if (ptr > RAM_SIZE) return 1;
     uint8_t* p = ram + ptr;
 #ifdef DEBUG_OUTPUT
-    printf("Here core dump\n");
     printf("address %08x\n", p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
 #endif
 #ifdef RV32C
@@ -1952,15 +1962,14 @@ void execute_instruction()
 #endif
                 return;
             } else {
-#ifdef DEBUG_EXTRA
-                dprintf(">>> C.ADDI\n");
-#endif
                 rs1 = rd = ((midpart >> 5) & 0x1f);
                 imm = (midpart & 0x1f) | ((midpart >> 5) &  0x20);
                 val = reg[rs1] + imm;
-            }
-            printf("rd: %d, rs1: %d, imm: %d, reg[rd]: %d, val: %d\n", rd, rs1, imm, reg[rd], val);
-            break;
+#ifdef DEBUG_EXTRA
+                dprintf(">>> C.ADDI\n");
+                printf("rd: %d, rs1: %d, imm: %d, reg[rd]: %d, val: %d\n", rd, rs1, imm, reg[rd], val);
+#endif
+            }break;
         case 1: /* C.JAL, C.ADDIW */
 #ifdef DEBUG_EXTRA
             switch(XLEN){
@@ -1988,10 +1997,8 @@ void execute_instruction()
                       ((midpart >> 6) & 0x8) |
                       ((midpart >> 1) & 0x7);
                 imm = (imm << 1) & 0xfffe;
-                printf("%08x\n", imm);
                 reg[1] = pc + 2; /* Store the link to x1 register */
                 next_pc = (int32_t)(pc + imm);
-                printf("next_pc: %08x\n", next_pc);
                 if(next_pc > pc) forward_counter++;
                 else backward_counter++;
                 jump_counter++;
@@ -2013,7 +2020,6 @@ void execute_instruction()
             imm = ((midpart >> 5) & 0x20) | (midpart & 0x1f);
             imm = imm << 26 >> 26;
             val = imm;
-            printf("%08x, rd: %d, imm : %08x\n", val, rd, imm);
             break;
         case 3: /* C.ADDI16SP, C.LUI */
             rs1 = rd = ((midpart >> 5) & 0x1f);
@@ -2026,7 +2032,7 @@ void execute_instruction()
                 dprintf(">>> C.LUI\n");
             }
 #endif
-            switch(rd){
+            switch(rd){ /* C.ADDI16SP */
             case 2:
                 imm = ((midpart >> 4) & 0x1) |
                       ((midpart << 1) & 0x2) |
@@ -2034,7 +2040,6 @@ void execute_instruction()
                       ((midpart << 2) & 0x18) |
                       ((midpart >> 5) & 0x20);
                 imm = (imm << 4 )<< (31 - 9) >> (31 - 9);
-                printf("imm :%d\n", imm);
                 val = reg[rd] + imm;
                 break;
             default:
@@ -2120,8 +2125,6 @@ void execute_instruction()
                         return;
                     }
                     val = reg[rs1];
-                    printf("imm : %08x\n", imm);
-                    printf("val : %08x\n", val);
                     break;
                 case 128:
                     rs1 = rd = ((midpart >> 5) & 0x7) + 8;
@@ -2285,7 +2288,6 @@ void execute_instruction()
             imm = (imm >> 3) & 0xff;
             addr = reg[2] + imm;
             val = reg[rs2];
-            printf("rs2: %d, imm: %d, reg[rs2]: %d, val: %d\n", rs2, imm, reg[rs2], val);
             if (target_write_u32(addr, val)) {
                 raise_exception(pending_exception, pending_tval);
                 return;
