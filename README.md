@@ -36,15 +36,17 @@ $ ./emu-rv32i test1
 Hello RISC-V!
 ```
 
+- RV32M and RV32A instructions may be enabled by commenting `#define STRICT_RV32I`.
+
+
 Passed RV32C compliance tests from https://github.com/riscv/riscv-compliance
-``shell
+```shell
 make C-ADDI.log
 ```
 If there is no accident, it will output the `TEST PASSED`
 
 
-RV32M and RV32A instructions may be enabled by commenting `#define STRICT_RV32I`.
-
+- RV32C instructions can be enabled by commenting `#define RV32C`
 ## How to build RISC-V toolchain from scratch
 
 https://github.com/riscv/riscv-gnu-toolchain
