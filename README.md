@@ -17,12 +17,22 @@ or
 $ make emu-rv32i
 ```
 
-Passed RV32I compliance tests from https://github.com/riscv/riscv-compliance
+Passed RV32IC compliance tests from https://github.com/riscv/riscv-compliance
 - Must install the [risc-v toolchain](https://xpack.github.io/riscv-none-embed-gcc/)
+
+- Run RV32I compliance tests.
+Assume `emu-rv32i` in `$PATH` environment variable.
 ```shell
 $ git clone https://github.com/riscv/riscv-compliance
 $ cd riscv-compliance
 $ make RISCV_PREFIX=riscv-none-embed- RISCV_DEVICE=rv32i TARGET_SIM=emu-rv32i variant
+```
+- Run RV32IMC compliance tests.
+Assume `emu-rv32i` in `$PATH` environment variable.
+```shell
+$ git clone https://github.com/riscv/riscv-compliance
+$ cd riscv-compliance
+$ make RISCV_PREFIX=riscv-none-embed- RISCV_DEVICE=rv32imc TARGET_SIM=emu-rv32i variant
 ```
 
 Compiling and running simple code:
@@ -38,15 +48,7 @@ Hello RISC-V!
 
 - RV32M and RV32A instructions may be enabled by commenting `#define STRICT_RV32I`.
 
-
-Passed RV32C compliance tests from https://github.com/riscv/riscv-compliance
-```shell
-make C-ADDI.log
-```
-If there is no accident, it will output the `TEST PASSED`
-
-
-- RV32C instructions can be enabled by commenting `#define RV32C`
+- RV32C instructions can be enabled by uncommenting `#define RV32C`
 ## How to build RISC-V toolchain from scratch
 
 https://github.com/riscv/riscv-gnu-toolchain
