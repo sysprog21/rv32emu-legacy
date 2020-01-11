@@ -2797,7 +2797,6 @@ void riscv_cpu_interp_x32()
             addr = reg[rs1] + imm;
             val = reg[rs2];
             rd = 0;
-            printf("addr: %08x\n", addr);
             if (target_write_u32(addr, val)) {
                 raise_exception(pending_exception, pending_tval);
                 return;
