@@ -40,7 +40,7 @@ test1: test1.c
 	$(CROSS_COMPILE)gcc $(RV32I_CFLAGS) -o $@ $<
 
 check: $(BINS)
-	./emu-rv32i test1
+	./emu-rv32i --elf test1
 
 clean:
 	$(RM) $(BINS)

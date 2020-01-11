@@ -74,8 +74,8 @@ original copyright:
 #include <gelf.h>
 #include <getopt.h>
 /* uncomment this for an instruction trace and other debug outputs */
-// #define DEBUG_OUTPUT
-// #define DEBUG_EXTRA
+#define DEBUG_OUTPUT
+#define DEBUG_EXTRA
 
 #define STRICT_RV32I
 #define FALSE (0)
@@ -205,6 +205,9 @@ uint64_t mtimecmp;
 
 /* virtual start address for index 0 in the ram array */
 uint32_t ram_start;
+
+/* Program entry point */
+uint32_t start;
 
 /* last byte of the memory initialized and temporary value */
 uint32_t ram_last = 0;
@@ -806,13 +809,19 @@ unsigned char get_insn32(uint32_t pc, uint32_t *insn)
     if(pc+3 > maxmemr) maxmemr = pc+3;
 #endif
     uint32_t ptr = pc - ram_start;
-    if (ptr > RAM_SIZE) return 1;
+    if (ptr > RAM_SIZE) {
+        *insn = 0;
+        return 1;
+    }
     uint8_t* p = ram + ptr;
-#ifdef DEBUG_OUTPUT
-    printf("address %08x\n", p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
-#endif
 #ifdef RV32C
-    if((p[0] & 0x03) < 3){
+    uint8_t hb, lb;
+    uint16_t  temp;
+    hb = p[1];
+    lb = p[0];
+    temp = (hb << 8) | lb;
+    printf("%04x\n", temp);
+    if( temp != 0 && (lb & 0x03) < 3){
         *insn = (p[0] | ((p[1] << 8) & 0x0000ffff));
         return CINSN;
     }
@@ -1977,7 +1986,7 @@ void execute_instruction()
             switch(midpart){
             case 0:
 #ifdef DEBUG_EXTRA
-                dprintf(">>> Illegal instruction\n");
+                debug_out(">>> Illegal instruction\n");
                 stats[64+0]++;
                 break;
                 dprintf(">>> C.ADDI4SPN\n");
@@ -1998,26 +2007,165 @@ void execute_instruction()
                 break;
             }
         break;
+        case 1: /* C.FLD, C.LQ*/
+        {
+            switch(XLEN){
+            case 32:
+            case 64: /* C.FLD */
+#ifdef DEBUG_EXTRA
+                debug_out("C.FLD\n");
+                printf("Not support to floating load double");
+                stats[64+2]++;
+#endif
+#ifdef DEBUG_OUTPUT
+#endif
+                rd = 0;
+            break;
+            case 128: /* C.LQ*/
+#ifdef DEBUG_EXTRA
+                debug_out("C.LQ\n");
+                printf("Unimp insn\b");
+                stats[64+3]++;
+#endif
+#ifdef DEBUG_OUTPUT
+#endif
+                rd = 0;
+            break;
+            }
+        }
+        break;
+        case 2: /* C.LW */
+        {
+#ifdef DEBUG_EXTRA
+                debug_out(">>>C.LW\n");
+                stats[64+4]++;
+#endif
+            rs1 = ((midpart >> 5) & 0x7) + 8;
+            rd  = (midpart & 0x7) + 8;
+            imm = (midpart >> 4) & 0x1 |
+                  (midpart >> 7) & 0xe |
+                  (midpart << 1) & 0x10;
+            imm = (imm << 2) & 0x7f;
+            addr = reg[rs1] + imm;
+            uint32_t rval;
+            if (target_read_u32(&rval, addr)) {
+                raise_exception(pending_exception, pending_tval);
+                return;
+            }
+            val = (int32_t)rval;
+
+#ifdef DEBUG_OUTPUT
+            printf("rs1 : %d, rd: %d, imm: %d\n", rs1, rd, imm);
+            printf("addr: %08x\n", addr);
+#endif
+        }
+        break;
+        case 3: /* C.FLW C.LD*/
+        {
+            switch(XLEN){
+            case 64:
+#ifdef DEBUG_EXTRA
+            debug_out(">>> C.FLW\n");
+            stats[64+5]++;
+#endif
+#ifdef DEBUG_OUTPUT
+            debug_out("Unimp insn for rv64c\n");
+#endif
+            break;
+            case 128:
+#ifdef DEBUG_EXTRA
+            debug_out(">>> C.LD\n");
+            stats[64+6]++;
+#endif
+#ifdef DEBUG_OUTPUT
+            debug_out("Unimp insn for rv128c\n");
+#endif
+            break;
+            }
+        }
+        break;
+        case 4: /* Reserved */
+#ifdef DEBUG_EXTRA
+            debug_out(">>> Reserved_0\n");
+            stats[64+7]++;
+#endif
+        break;
+        case 5: /* C.FSD */
+        {
+            switch(XLEN){
+            case 32:
+            case 64:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.FSD\n");
+                stats[64+8]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("Unimp insn for rv32imc");
+#endif
+            break;
+            case 128:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.SQ\n");
+                stats[64+9]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("Unimp insn for rv32imc");
+#endif
+            break;
+            default:
+#ifdef DEBUG_OUTPUT
+                raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                return;
+#endif
+            break;
+            }
+        }
+        break;
+        case 6:
+        {
+#ifdef DEBUG_EXTRA
+            debug_out(">>> C.SW\n");
+            stats[64+10]++;
+#endif
+            rs1 = ((midpart >> 5) & 0x7) + 8;
+            rs2 = (midpart & 0x7) + 8;
+            imm = ((midpart >> 4) & 0x1) |
+                  ((midpart >> 7) & 0xe) |
+                  ((midpart << 1) & 0x10);
+            imm = (imm << 2) & 0x7f;
+            addr = reg[rs1] + imm;
+            val = reg[rs2];
+            rd = 0;
+            if (target_write_u32(addr, val)) {
+                raise_exception(pending_exception, pending_tval);
+                return;
+            }
+#ifdef DEBUG_OUTPUT
+            printf("rs1 : %d, rs2: %d, rd: %d, imm: %d\n", rs1, rs2, rd, imm);
+            printf("addr: %08x\n", addr);
+#endif
+        }
+        break;
         case 7:
         {
             switch(XLEN){
             case 32:
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.FSW\n");
+                debug_out(">>> C.FSW\n");
                 stats[64+11]++;
 #endif
 #ifdef DEBUG_OUTPUT
-                dprintf("Unimp insn for rv32imc");
+                debug_out("Unimp insn for rv32imc");
 #endif
             break;
             case 64:
             case 128:
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.SD\n");
+                debug_out(">>> C.SD\n");
                 stats[64+12]++;
 #endif
 #ifdef DEBUG_OUTPUT
-                dprintf("Unsupported insn by rv32imc\n");
+                debug_out("Unsupported insn by rv32imc\n");
 #endif
             break;
             }
@@ -2040,7 +2188,7 @@ void execute_instruction()
         case 0: /* C.NOP, C.ADDI */
             if( ((midpart >> 5) & 0x1f)  == 0){ /* C.NOP*/
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.NOP\n");
+                debug_out(">>> C.NOP\n");
                 stats[64+13]++;
 #endif
                 return;
@@ -2049,7 +2197,7 @@ void execute_instruction()
                 imm = (midpart & 0x1f) | ((midpart >> 5) &  0x20);
                 val = reg[rs1] + imm;
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.ADDI\n");
+                debug_out(">>> C.ADDI\n");
                 stats[64+14]++;
                 printf("rd: %d, rs1: %d, imm: %d, reg[rd]: %d, val: %d\n", rd, rs1, imm, reg[rd], val);
 #endif
@@ -2058,16 +2206,16 @@ void execute_instruction()
 #ifdef DEBUG_EXTRA
             switch(XLEN){
                 case 32:
-                    dprintf(">>> C.JAL\n");
+                    debug_out(">>> C.JAL\n");
                     stats[64+15]++;
                     break;
                 case 64:
                 case 128:
-                    dprintf(">>> C.ADDIW\n");
+                    debug_out(">>> C.ADDIW\n");
                     stats[64+16]++;
                     break;
                 default:
-                    dprintf(">>> Unknow XLEN\n");
+                    debug_out(">>> Unknow XLEN\n");
                     break;
             }
 #endif
@@ -2100,7 +2248,7 @@ void execute_instruction()
             break;
         case 2: /* C.LI */
 #ifdef DEBUG_EXTRA
-            dprintf(">>> C.LI\n");
+            debug_out(">>> C.LI\n");
             stats[64+17]++;
 #endif
             rs1 = rd = ((midpart >> 5) & 0x1f);
@@ -2113,11 +2261,11 @@ void execute_instruction()
 #ifdef DEBUG_EXTRA
             switch(rd){
             case 2:
-                dprintf(">>> C.ADDI16SP\n");
+                debug_out(">>> C.ADDI16SP\n");
                 stats[64+18]++;
                 break;
             default:
-                dprintf(">>> C.LUI\n");
+                debug_out(">>> C.LUI\n");
                 stats[64+19]++;
                 break;
             }
@@ -2159,11 +2307,11 @@ void execute_instruction()
                 switch(XLEN){
                 case 32:
                 case 64:
-                    dprintf(">>> C.SRLI\n");
+                    debug_out(">>> C.SRLI\n");
                     stats[64+20]++;
                     break;
                 case 128:
-                    dprintf(">>> C.SRLI64\n");
+                    debug_out(">>> C.SRLI64\n");
                     stats[64+21]++;
                     break;
                 }
@@ -2196,11 +2344,11 @@ void execute_instruction()
                 switch(XLEN){
                 case 32:
                 case 64:
-                    dprintf(">>> C.SRAI\n");
+                    debug_out(">>> C.SRAI\n");
                     stats[64+22]++;
                     break;
                 case 128:
-                    dprintf(">>> C.SRAI64\n");
+                    debug_out(">>> C.SRAI64\n");
                     stats[64+23]++;
                     break;
                 }
@@ -2230,7 +2378,7 @@ void execute_instruction()
                 break;
             case 2: /* C.ANDI */
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.ANDI\n");
+                debug_out(">>> C.ANDI\n");
                 stats[64+24]++;
 #endif
                 rs1 = rd = ((midpart >> 5) & 0x7) + 8;
@@ -2245,21 +2393,21 @@ void execute_instruction()
                 switch(((midpart >> 3) & 0x3) | ((midpart >> 8) & 0x4) ){
                 case 0: /* C.SUB */
 #ifdef DEBUG_EXTRA
-                    dprintf(">>> C.SUB\n");
+                    debug_out(">>> C.SUB\n");
                     stats[64+25]++;
 #endif
                     val = reg[rd] - reg[rs2];
                     break;
                 case 1: /* C.XOR */
 #ifdef DEBUG_EXTRA
-                    dprintf(">>> C.XOR\n");
+                    debug_out(">>> C.XOR\n");
                     stats[64+26]++;
 #endif
                     val = reg[rd] ^ reg[rs2];
                     break;
                 case 2: /* C.OR */
 #ifdef DEBUG_EXTRA
-                    dprintf(">>> C.OR\n");
+                    debug_out(">>> C.OR\n");
                     stats[64+27]++;
 #endif
                     val = reg[rd] | reg[rs2];
@@ -2267,14 +2415,14 @@ void execute_instruction()
                     break;
                 case 3: /* C.AND */
 #ifdef DEBUG_EXTRA
-                    dprintf(">>> C.AND\n");
+                    debug_out(">>> C.AND\n");
                     stats[64+28]++;
 #endif
                     val = reg[rd] & reg[rs2];
                     break;
                 case 4: /* C.SUBW */
 #ifdef DEBUG_EXTRA
-                    dprintf(">>> C.SUBW\n");
+                    debug_out(">>> C.SUBW\n");
                     stats[64+29]++;
 #endif
                     val = reg[rd] - reg[rs2];
@@ -2288,7 +2436,7 @@ void execute_instruction()
                     break;
                 case 5: /* C.ADDW */
 #ifdef DEBUG_EXTRA
-                    dprintf(">>> C.ADDW\n");
+                    debug_out(">>> C.ADDW\n");
                     stats[64+30]++;
 #endif
                     val = reg[rd] + reg[rs2];
@@ -2302,12 +2450,12 @@ void execute_instruction()
                     break;
                 case 6:
 #ifdef DEBUG_EXTRA
-                    dprintf(">>> Reserved_1\n");
+                    debug_out(">>> Reserved_1\n");
                     stats[64+31]++;
 #endif
                 case 7:
 #ifdef DEBUG_EXTRA
-                    dprintf(">>> Reserved_2\n");
+                    debug_out(">>> Reserved_2\n");
                     stats[64+32]++;
 #endif
                     /* NOP */
@@ -2317,7 +2465,7 @@ void execute_instruction()
             break;
         case 5: /* C.J */
 #ifdef DEBUG_EXTRA
-            dprintf(">>> C.J\n");
+            debug_out(">>> C.J\n");
              stats[64+33]++;
 #endif
             rd = 0;
@@ -2337,7 +2485,7 @@ void execute_instruction()
             break;
         case 6: /* C.BEQZ */
 #ifdef DEBUG_EXTRA
-            dprintf(">>> C.BEQZ\n");
+            debug_out(">>> C.BEQZ\n");
              stats[64+34]++;
 #endif
             rs1 = ((midpart >> 5) & 0x7) + 8;
@@ -2357,7 +2505,7 @@ void execute_instruction()
             break;
         case 7: /* C.BNEZ */
 #ifdef DEBUG_EXTRA
-            dprintf(">>> C.BNEZ\n");
+            debug_out(">>> C.BNEZ\n");
              stats[64+35]++;
 #endif
             rs1  = ((midpart >> 5) & 0x7) + 8;
@@ -2401,7 +2549,7 @@ void execute_instruction()
                 }
             case 64:
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.SLLI\n");
+                debug_out(">>> C.SLLI\n");
                  stats[64+36]++;
 #endif
                 if(imm == 0){
@@ -2417,7 +2565,7 @@ void execute_instruction()
             break;
             case 128: /* C.SLLI64 */
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.SLLI64\n");
+                debug_out(">>> C.SLLI64\n");
                  stats[64+37]++;
 #endif
                 rd = ((midpart >> 5) & 0x1f);
@@ -2428,7 +2576,7 @@ void execute_instruction()
                 imm = 64;
 
 #ifdef DEBUG_OUTPUT
-                dprintf("Unsupported insn by rv32imc\n");
+                debug_out("Unsupported insn by rv32imc\n");
 #endif
             break;
             }
@@ -2442,20 +2590,20 @@ void execute_instruction()
             case 32:
             case 64: /* C.FLDSP */
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.FLDSP\n");\
+                debug_out(">>> C.FLDSP\n");\
                  stats[64+38]++;
 #endif
 #ifdef DEBUG_OUTPUT
-                dprintf("Unsupported extension by rv32imc");
+                debug_out("Unsupported extension by rv32imc");
 #endif
             break;
             case 128:
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.LQSP\n");
+                debug_out(">>> C.LQSP\n");
                  stats[64+39]++;
 #endif
 #ifdef DEBUG_OUTPUT
-                dprintf("unsupported extension by rv32imc");
+                debug_out("unsupported extension by rv32imc");
 #endif
             break;
             }
@@ -2465,7 +2613,7 @@ void execute_instruction()
         case 2: /* C.LWSP C.FLWSP*/
         {
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.LWSP\n");
+                debug_out(">>> C.LWSP\n");
                  stats[64+40]++;
 #endif
                 rd = ((midpart >> 5) & 0x1f);
@@ -2495,20 +2643,20 @@ void execute_instruction()
             case 32:
             case 64: /* C.FLWSP */
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.FLWSP\n");
+                debug_out(">>> C.FLWSP\n");
                  stats[64+41]++;
 #endif
 #ifdef DEBUG_OUTPUT
-                dprintf("Unsupported extension by rv32imc");
+                debug_out("Unsupported extension by rv32imc");
 #endif
             break;
             case 128:
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.LDSP\n");
+                debug_out(">>> C.LDSP\n");
                  stats[64+42]++;
 #endif
 #ifdef DEBUG_OUTPUT
-                dprintf("unsupported extension by rv32imc");
+                debug_out("unsupported extension by rv32imc");
 #endif
             break;
             }
@@ -2524,7 +2672,7 @@ void execute_instruction()
             case 0:
                 if(rs2 == 0){ /* C.JR */
 #ifdef DEBUG_EXTRA
-                    dprintf(">>> C.JR\n");
+                    debug_out(">>> C.JR\n");
                      stats[64+43]++;
 #endif
                     next_pc = reg[rs1];
@@ -2537,7 +2685,7 @@ void execute_instruction()
 #endif
                 }else{ /* C.MV */
 #ifdef DEBUG_EXTRA
-                    dprintf(">>> C.MV\n");
+                    debug_out(">>> C.MV\n");
                      stats[64+44]++;
 #endif
                     rd = rs1;
@@ -2551,14 +2699,14 @@ void execute_instruction()
             case 1:
                 if(rs1 == 0 && rs2 == 0){ /* C.EBREAK */
 #ifdef DEBUG_EXTRA
-                    dprintf(">>> EBREAK\n");
+                    debug_out(">>> EBREAK\n");
                      stats[64+45]++;
 #endif
                     raise_exception(CAUSE_BREAKPOINT, 0);
                     return;
                 }else if(rs2 == 0 && rs1 != 0){ /* C.JALR */
 #ifdef DEBUG_EXTRA
-                    dprintf(">>> C.JALR\n");
+                    debug_out(">>> C.JALR\n");
                      stats[64+46]++;
 #endif
                     rd = 1;
@@ -2585,20 +2733,20 @@ void execute_instruction()
             case 32:
             case 64:
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.FSDS{\n");
+                debug_out(">>> C.FSDS{\n");
                  stats[64+47]++;
 #endif
 #ifdef DEBUG_OUTPUT
-                dprintf("Unsupported insn of rv32imc\n");
+                debug_out("Unsupported insn of rv32imc\n");
 #endif
             break;
             case 128:
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.SQSP\n");
+                debug_out(">>> C.SQSP\n");
                  stats[64+48]++;
 #endif
 #ifdef DEBUG_OUTPUT
-                dprintf("Unsupported insn of rv32imc\n");
+                debug_out("Unsupported insn of rv32imc\n");
 #endif
             break;
             }
@@ -2607,7 +2755,7 @@ void execute_instruction()
         case 6: /* C.SWSP*/
         {
 #ifdef DEBUG_EXTRA
-            dprintf(">>> C.SWSP\n");
+            debug_out(">>> C.SWSP\n");
              stats[64+49]++;
 #endif
             rd = 0;
@@ -2632,21 +2780,21 @@ void execute_instruction()
             switch(XLEN){
             case 32:
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.FSWSP\n");
+                debug_out(">>> C.FSWSP\n");
                  stats[64+50]++;
 #endif
 #ifdef DEBUG_OUTPUT
-                dprintf("Unsupported insn of rv32imc\n");
+                debug_out("Unsupported insn of rv32imc\n");
 #endif
             break;
             case 64:
             case 128:
 #ifdef DEBUG_EXTRA
-                dprintf(">>> C.SDSP\n");
+                debug_out(">>> C.SDSP\n");
                  stats[64+51]++;
 #endif
 #ifdef DEBUG_OUTPUT
-                dprintf("Unsupported insn of rv32imc\n");
+                debug_out("Unsupported insn of rv32imc\n");
 #endif
             break;
             }
@@ -3587,12 +3735,12 @@ int main(int argc, char **argv)
 
                 /* for compliance test */
                 if (strcmp(name, "_start") == 0) {
-                    ram_start = sym.st_value;
+                    start = sym.st_value;
                 }
 
                 /* for zephyr */
                 if (strcmp(name, "__reset") == 0) {
-                    ram_start = sym.st_value;
+                    start = sym.st_value;
                 }
                 if (strcmp(name, "__irq_wrapper") == 0) {
                     mtvec = sym.st_value;
@@ -3600,13 +3748,9 @@ int main(int argc, char **argv)
             }
         }
     }
-#ifdef DEBUG_OUTPUT
-    printf("begin_signature: 0x%08x\n", begin_signature);
-    printf("end_signature: 0x%08x\n", end_signature);
-    printf("start: 0x%08x\n", ram_start);
-#endif
 
     /* scan for program */
+    scn = NULL;
     while ((scn = elf_nextscn(elf, scn)) != NULL) {
         gelf_getshdr(scn, &shdr);
         if (shdr.sh_type == SHT_PROGBITS) {
