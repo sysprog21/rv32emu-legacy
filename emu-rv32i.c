@@ -1,21 +1,73 @@
+/* Modified by Shaos <me@shaos.net>
+   24-DEC-2018 - Find top 5 instructions in DEBUG_EXTRA mode
+   20-DEC-2018 - More statistical points
+   22-NOV-2018 - Added saving HEX file with copy of the code in DEBUG_OUTPUT mode
+   21-NOV-2018 - Some statistics added in DEBUG_EXTRA mode
+   20-NOV-2018 - By default RV32M and RV32A extensions are disabled (STRICT_RV32I)
+   18-NOV-2018 - Slghtly modified for pure C
+   Source code taken from https://gist.github.com/FrankBuss/c974e59826d33e21d7cad54491ab50e8
+*/
+
 /*
- * A minimalist RISC-V emulator for the RV32I architecture.
+RISCV emulator for the RV32I architecture
+based on TinyEMU by Fabrice Bellard, see https://bellard.org/tinyemu/
+stripped down for RV32I only, all "gotos" removed, and fixed some bugs for the compliance test
+by Frank Buss, 2018
+Requires libelf-dev:
+sudo apt-get install libelf-dev
+Compile it like this:
+gcc -O3 -Wall -lelf emu-rv32i.c -o emu-rv32i
+It is compatible to Spike for the command line arguments, which means you can run
+the compliance test from https://github.com/riscv/riscv-compliance like this:
+make RISCV_TARGET=spike RISCV_DEVICE=rv32i TARGET_SIM=/full/path/emulator variant
+It is also compatible with qemu32, as it is used for Zephyr. You can compile the
+Zephyr examples for qemu like this:
+cd zephyr
+source zephyr-env.sh
+cd samples/synchronization
+mkdir build && cd build
+cmake -GNinja -DBOARD=qemu_riscv32 ..
+ninja
+After this you can run it with the emulator like this:
+emu-rv32i zephyr/zephyr.elf
+original copyright:
+*/
+
+/*
+ * RISCV emulator
  *
- * rv32emu is freely redistributable under the MIT License. See the file
- * "LICENSE" for information on usage and redistribution of this file.
+ * Copyright (c) 2016 Fabrice Bellard
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
  */
 
 #define XLEN 32
 
+#include <stdio.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <fcntl.h>
-#include <gelf.h>
-#include <libelf.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <sys/types.h>
+#include <unistd.h>
 #include <time.h>
 #include <unistd.h>
 #include <libelf.h>
@@ -31,7 +83,7 @@
 
 #ifdef DEBUG_EXTRA
 
-uint32_t minmemr, maxmemr, minmemw, maxmemw;
+uint32_t minmemr,maxmemr,minmemw,maxmemw;
 
 #define STATS_NUM 64
 
@@ -133,9 +185,9 @@ void print_stats(uint64_t total)
 #endif
 
 #ifdef DEBUG_OUTPUT
-#define debug_out(...) printf(__VA_ARGS__)
+#define dprintf(s) printf(s)
 #else
-#define debug_out(...)
+#define dprintf(s)
 #endif
 
 /* memory mapped registers */
@@ -153,9 +205,6 @@ uint64_t mtimecmp;
 
 /* virtual start address for index 0 in the ram array */
 uint32_t ram_start;
-
-/* program entry point */
-uint32_t start;
 
 /* last byte of the memory initialized and temporary value */
 uint32_t ram_last = 0;
@@ -188,11 +237,10 @@ uint32_t reg[32];
 
 
 uint8_t priv = PRV_M; /* see PRV_x */
-uint8_t fs;           /* MSTATUS_FS value */
-uint8_t mxl;          /* MXL field in MISA register */
+uint8_t fs; /* MSTATUS_FS value */
+uint8_t mxl; /* MXL field in MISA register */
 
-uint64_t jump_counter = 0, backward_counter = 0, forward_counter = 0,
-         true_counter = 0, false_counter = 0;
+uint64_t jump_counter=0,backward_counter=0,forward_counter=0,true_counter=0,false_counter=0;
 
 uint64_t insn_counter = 0;
 int pending_exception; /* used during MMU exception handling */
@@ -223,33 +271,33 @@ uint32_t scounteren;
 uint32_t load_res; /* for atomic LR/SC */
 
 /* exception causes */
-#define CAUSE_MISALIGNED_FETCH 0x0
-#define CAUSE_FAULT_FETCH 0x1
+#define CAUSE_MISALIGNED_FETCH    0x0
+#define CAUSE_FAULT_FETCH         0x1
 #define CAUSE_ILLEGAL_INSTRUCTION 0x2
-#define CAUSE_BREAKPOINT 0x3
-#define CAUSE_MISALIGNED_LOAD 0x4
-#define CAUSE_FAULT_LOAD 0x5
-#define CAUSE_MISALIGNED_STORE 0x6
-#define CAUSE_FAULT_STORE 0x7
-#define CAUSE_USER_ECALL 0x8
-#define CAUSE_SUPERVISOR_ECALL 0x9
-#define CAUSE_HYPERVISOR_ECALL 0xa
-#define CAUSE_MACHINE_ECALL 0xb
-#define CAUSE_FETCH_PAGE_FAULT 0xc
-#define CAUSE_LOAD_PAGE_FAULT 0xd
-#define CAUSE_STORE_PAGE_FAULT 0xf
-#define CAUSE_INTERRUPT ((uint32_t) 1 << 31)
+#define CAUSE_BREAKPOINT          0x3
+#define CAUSE_MISALIGNED_LOAD     0x4
+#define CAUSE_FAULT_LOAD          0x5
+#define CAUSE_MISALIGNED_STORE    0x6
+#define CAUSE_FAULT_STORE         0x7
+#define CAUSE_USER_ECALL          0x8
+#define CAUSE_SUPERVISOR_ECALL    0x9
+#define CAUSE_HYPERVISOR_ECALL    0xa
+#define CAUSE_MACHINE_ECALL       0xb
+#define CAUSE_FETCH_PAGE_FAULT    0xc
+#define CAUSE_LOAD_PAGE_FAULT     0xd
+#define CAUSE_STORE_PAGE_FAULT    0xf
+#define CAUSE_INTERRUPT  ((uint32_t)1 << 31)
 
 /* misa CSR */
-#define MCPUID_SUPER (1 << ('S' - 'A'))
-#define MCPUID_USER (1 << ('U' - 'A'))
-#define MCPUID_I (1 << ('I' - 'A'))
-#define MCPUID_M (1 << ('M' - 'A'))
-#define MCPUID_A (1 << ('A' - 'A'))
-#define MCPUID_F (1 << ('F' - 'A'))
-#define MCPUID_D (1 << ('D' - 'A'))
-#define MCPUID_Q (1 << ('Q' - 'A'))
-#define MCPUID_C (1 << ('C' - 'A'))
+#define MCPUID_SUPER   (1 << ('S' - 'A'))
+#define MCPUID_USER    (1 << ('U' - 'A'))
+#define MCPUID_I       (1 << ('I' - 'A'))
+#define MCPUID_M       (1 << ('M' - 'A'))
+#define MCPUID_A       (1 << ('A' - 'A'))
+#define MCPUID_F       (1 << ('F' - 'A'))
+#define MCPUID_D       (1 << ('D' - 'A'))
+#define MCPUID_Q       (1 << ('Q' - 'A'))
+#define MCPUID_C       (1 << ('C' - 'A'))
 
 #define MIP_USIP (1 << 0)
 #define MIP_SSIP (1 << 1)
@@ -289,8 +337,8 @@ uint32_t load_res; /* for atomic LR/SC */
 #define MSTATUS_MPRV (1 << 17)
 #define MSTATUS_SUM (1 << 18)
 #define MSTATUS_MXR (1 << 19)
-#define MSTATUS_UXL_MASK ((uint64_t) 3 << MSTATUS_UXL_SHIFT)
-#define MSTATUS_SXL_MASK ((uint64_t) 3 << MSTATUS_SXL_SHIFT)
+#define MSTATUS_UXL_MASK ((uint64_t)3 << MSTATUS_UXL_SHIFT)
+#define MSTATUS_SXL_MASK ((uint64_t)3 << MSTATUS_SXL_SHIFT)
 
 static inline int ctz32(uint32_t val)
 {
@@ -327,16 +375,19 @@ static inline int ctz32(uint32_t val)
 #endif
 }
 
-#define SSTATUS_MASK0                                                        \
-    (MSTATUS_UIE | MSTATUS_SIE | MSTATUS_UPIE | MSTATUS_SPIE | MSTATUS_SPP | \
-     MSTATUS_FS | MSTATUS_XS | MSTATUS_SUM | MSTATUS_MXR)
+#define SSTATUS_MASK0 (MSTATUS_UIE | MSTATUS_SIE |       \
+                      MSTATUS_UPIE | MSTATUS_SPIE |     \
+                      MSTATUS_SPP | \
+                      MSTATUS_FS | MSTATUS_XS | \
+                      MSTATUS_SUM | MSTATUS_MXR)
 #define SSTATUS_MASK SSTATUS_MASK0
 
 
-#define MSTATUS_MASK                                                         \
-    (MSTATUS_UIE | MSTATUS_SIE | MSTATUS_MIE | MSTATUS_UPIE | MSTATUS_SPIE | \
-     MSTATUS_MPIE | MSTATUS_SPP | MSTATUS_MPP | MSTATUS_FS | MSTATUS_MPRV |  \
-     MSTATUS_SUM | MSTATUS_MXR)
+#define MSTATUS_MASK (MSTATUS_UIE | MSTATUS_SIE | MSTATUS_MIE |      \
+                      MSTATUS_UPIE | MSTATUS_SPIE | MSTATUS_MPIE |    \
+                      MSTATUS_SPP | MSTATUS_MPP | \
+                      MSTATUS_FS | \
+                      MSTATUS_MPRV | MSTATUS_SUM | MSTATUS_MXR)
 
 /* cycle and insn counters */
 #define COUNTEREN_MASK ((1 << 0) | (1 << 2))
@@ -348,10 +399,10 @@ uint32_t get_mstatus(uint32_t mask)
     int sd;
     val = mstatus | (fs << MSTATUS_FS_SHIFT);
     val &= mask;
-    sd =
-        ((val & MSTATUS_FS) == MSTATUS_FS) | ((val & MSTATUS_XS) == MSTATUS_XS);
+    sd = ((val & MSTATUS_FS) == MSTATUS_FS) |
+         ((val & MSTATUS_XS) == MSTATUS_XS);
     if (sd)
-        val |= (uint32_t) 1 << (XLEN - 1);
+        val |= (uint32_t)1 << (XLEN - 1);
     return val;
 }
 
@@ -367,14 +418,17 @@ void invalid_csr(uint32_t *pval, uint32_t csr)
 {
     /* the 'time' counter is usually emulated */
     if (csr != 0xc01 && csr != 0xc81) {
-        debug_out("csr_read: invalid CSR=0x%x\n", csr);
+#ifdef DEBUG_OUTPUT
+        printf("csr_read: invalid CSR=0x%x\n", csr);
+#endif
     }
     *pval = 0;
 }
 
 /* return -1 if invalid CSR. 0 if OK. 'will_write' indicate that the
    csr will be written after (used for CSR access check) */
-int csr_read(uint32_t *pval, uint32_t csr, int will_write)
+int csr_read(uint32_t *pval, uint32_t csr,
+             int will_write)
 {
     uint32_t val;
 
@@ -387,7 +441,7 @@ int csr_read(uint32_t *pval, uint32_t csr, int will_write)
     if (priv < ((csr >> 8) & 3))
         return -1; /* not enough priviledge */
 
-    switch (csr) {
+    switch(csr) {
     case 0xc00: /* cycle */
     case 0xc02: /* instret */
     {
@@ -403,8 +457,8 @@ int csr_read(uint32_t *pval, uint32_t csr, int will_write)
             }
         }
     }
-        val = (int64_t) insn_counter;
-        break;
+    val = (int64_t)insn_counter;
+    break;
     case 0xc80: /* cycleh */
     case 0xc82: /* instreth */
     {
@@ -420,8 +474,8 @@ int csr_read(uint32_t *pval, uint32_t csr, int will_write)
             }
         }
     }
-        val = insn_counter >> 32;
-        break;
+    val = insn_counter >> 32;
+    break;
 
     case 0x100:
         val = get_mstatus(SSTATUS_MASK);
@@ -454,11 +508,11 @@ int csr_read(uint32_t *pval, uint32_t csr, int will_write)
         val = satp;
         break;
     case 0x300:
-        val = get_mstatus((uint32_t) -1);
+        val = get_mstatus((uint32_t)-1);
         break;
     case 0x301:
         val = misa;
-        val |= (uint32_t) mxl << (XLEN - 2);
+        val |= (uint32_t)mxl << (XLEN - 2);
         break;
     case 0x302:
         val = medeleg;
@@ -492,7 +546,7 @@ int csr_read(uint32_t *pval, uint32_t csr, int will_write)
         break;
     case 0xb00: /* mcycle */
     case 0xb02: /* minstret */
-        val = (int64_t) insn_counter;
+        val = (int64_t)insn_counter;
         break;
     case 0xb80: /* mcycleh */
     case 0xb82: /* minstreth */
@@ -523,7 +577,7 @@ int csr_write(uint32_t csr, uint32_t val)
 #ifdef DEBUG_EXTRA
     printf("csr_write: csr=0x%03x val=0x%08x\n", csr, val);
 #endif
-    switch (csr) {
+    switch(csr) {
     case 0x100: /* sstatus */
         set_mstatus((mstatus & ~SSTATUS_MASK) | (val & SSTATUS_MASK));
         break;
@@ -554,11 +608,12 @@ int csr_write(uint32_t csr, uint32_t val)
         mip = (mip & ~mask) | (val & mask);
         break;
     case 0x180: /* no ASID implemented */
-    {
-        int new_mode;
-        new_mode = (val >> 31) & 1;
-        satp = (val & (((uint32_t) 1 << 22) - 1)) | (new_mode << 31);
-    }
+        {
+            int new_mode;
+            new_mode = (val >> 31) & 1;
+            satp = (val & (((uint32_t)1 << 22) - 1)) |
+                   (new_mode << 31);
+        }
         return 2;
 
     case 0x300:
@@ -613,7 +668,8 @@ void handle_sret()
     spp = (mstatus >> MSTATUS_SPP_SHIFT) & 1;
     /* set the IE state to previous IE state */
     spie = (mstatus >> MSTATUS_SPIE_SHIFT) & 1;
-    mstatus = (mstatus & ~(1 << spp)) | (spie << spp);
+    mstatus = (mstatus & ~(1 << spp)) |
+              (spie << spp);
     /* set SPIE to 1 */
     mstatus |= MSTATUS_SPIE;
     /* set SPP to U */
@@ -628,7 +684,8 @@ void handle_mret()
     mpp = (mstatus >> MSTATUS_MPP_SHIFT) & 3;
     /* set the IE state to previous IE state */
     mpie = (mstatus >> MSTATUS_MPIE_SHIFT) & 1;
-    mstatus = (mstatus & ~(1 << mpp)) | (mpie << mpp);
+    mstatus = (mstatus & ~(1 << mpp)) |
+              (mpie << mpp);
     /* set MPIE to 1 */
     mstatus |= MSTATUS_MPIE;
     /* set MPP to U */
@@ -643,8 +700,9 @@ void raise_exception(uint32_t cause, uint32_t tval)
 
     /* exit for Zephyr applications */
     if (cause == CAUSE_ILLEGAL_INSTRUCTION) {
-        debug_out("raise_exception: illegal instruction 0x%x 0x%x\n", cause,
-                  tval);
+#ifdef DEBUG_OUTPUT
+        printf("raise_exception: illegal instruction 0x%x 0x%x\n", cause, tval);
+#endif
         machine_running = FALSE;
         return;
     }
@@ -680,7 +738,8 @@ void raise_exception(uint32_t cause, uint32_t tval)
         stval = tval;
         mstatus = (mstatus & ~MSTATUS_SPIE) |
                   (((mstatus >> priv) & 1) << MSTATUS_SPIE_SHIFT);
-        mstatus = (mstatus & ~MSTATUS_SPP) | (priv << MSTATUS_SPP_SHIFT);
+        mstatus = (mstatus & ~MSTATUS_SPP) |
+                  (priv << MSTATUS_SPP_SHIFT);
         mstatus &= ~MSTATUS_SIE;
         priv = PRV_S;
         next_pc = stvec;
@@ -690,7 +749,8 @@ void raise_exception(uint32_t cause, uint32_t tval)
         mtval = tval;
         mstatus = (mstatus & ~MSTATUS_MPIE) |
                   (((mstatus >> priv) & 1) << MSTATUS_MPIE_SHIFT);
-        mstatus = (mstatus & ~MSTATUS_MPP) | (priv << MSTATUS_MPP_SHIFT);
+        mstatus = (mstatus & ~MSTATUS_MPP) |
+                  (priv << MSTATUS_MPP_SHIFT);
         mstatus &= ~MSTATUS_MIE;
         priv = PRV_M;
         next_pc = mtvec;
@@ -706,7 +766,7 @@ uint32_t get_pending_irq_mask()
         return 0;
 
     enabled_ints = 0;
-    switch (priv) {
+    switch(priv) {
     case PRV_M:
         if (mstatus & MSTATUS_MIE)
             enabled_ints = ~mideleg;
@@ -742,10 +802,8 @@ int raise_interrupt()
 unsigned char get_insn32(uint32_t pc, uint32_t *insn)
 {
 #ifdef DEBUG_EXTRA
-    if (pc && pc < minmemr)
-        minmemr = pc;
-    if (pc + 3 > maxmemr)
-        maxmemr = pc + 3;
+    if(pc && pc < minmemr) minmemr = pc;
+    if(pc+3 > maxmemr) maxmemr = pc+3;
 #endif
     uint32_t ptr = pc - ram_start;
     if (ptr > RAM_SIZE) return 1;
@@ -768,10 +826,8 @@ unsigned char get_insn32(uint32_t pc, uint32_t *insn)
 int target_read_u8(uint8_t *pval, uint32_t addr)
 {
 #ifdef DEBUG_EXTRA
-    if ((addr >> 28) != 4 && addr < minmemr)
-        minmemr = addr;
-    if (addr > maxmemr)
-        maxmemr = addr;
+    if((addr>>28)!=4 && addr < minmemr) minmemr = addr;
+    if(addr > maxmemr) maxmemr = addr;
 #endif
     addr -= ram_start;
     if (addr > RAM_SIZE) {
@@ -780,7 +836,7 @@ int target_read_u8(uint8_t *pval, uint32_t addr)
                addr + ram_start);
         return 1;
     } else {
-        uint8_t *p = ram + addr;
+        uint8_t* p = ram + addr;
         *pval = p[0];
     }
     return 0;
@@ -791,10 +847,8 @@ int target_read_u8(uint8_t *pval, uint32_t addr)
 int target_read_u16(uint16_t *pval, uint32_t addr)
 {
 #ifdef DEBUG_EXTRA
-    if ((addr >> 28) != 4 && addr < minmemr)
-        minmemr = addr;
-    if (addr + 1 > maxmemr)
-        maxmemr = addr + 1;
+    if((addr>>28)!=4 && addr < minmemr) minmemr = addr;
+    if(addr+1 > maxmemr) maxmemr = addr+1;
 #endif
     if (addr & 1) {
         pending_exception = CAUSE_MISALIGNED_LOAD;
@@ -802,13 +856,12 @@ int target_read_u16(uint16_t *pval, uint32_t addr)
         return 1;
     }
     addr -= ram_start;
-    if (addr > RAM_SIZE) {
+    if (addr > RAM_SIZE)  {
         *pval = 0;
-        printf("illegal read 16, PC: 0x%08x, address: 0x%08x\n", pc,
-               addr + ram_start);
+        printf("illegal read 16, PC: 0x%08x, address: 0x%08x\n", pc, addr + ram_start);
         return 1;
     } else {
-        uint8_t *p = ram + addr;
+        uint8_t* p = ram + addr;
         *pval = p[0] | (p[1] << 8);
     }
     return 0;
@@ -819,10 +872,8 @@ int target_read_u16(uint16_t *pval, uint32_t addr)
 int target_read_u32(uint32_t *pval, uint32_t addr)
 {
 #ifdef DEBUG_EXTRA
-    if ((addr >> 28) != 4 && addr < minmemr)
-        minmemr = addr;
-    if (addr + 3 > maxmemr)
-        maxmemr = addr + 3;
+    if((addr>>28)!=4 && addr < minmemr) minmemr = addr;
+    if(addr+3 > maxmemr) maxmemr = addr+3;
 #endif
     if (addr & 3) {
         pending_exception = CAUSE_MISALIGNED_LOAD;
@@ -832,20 +883,19 @@ int target_read_u32(uint32_t *pval, uint32_t addr)
     if (addr == MTIMECMP_ADDR) {
         *pval = (uint32_t) mtimecmp;
     } else if (addr == MTIMECMP_ADDR + 4) {
-        *pval = (uint32_t)(mtimecmp >> 32);
+        *pval = (uint32_t) (mtimecmp >> 32);
     } else if (addr == MTIME_ADDR) {
         *pval = (uint32_t) mtime;
     } else if (addr == MTIME_ADDR + 4) {
-        *pval = (uint32_t)(mtime >> 32);
+        *pval = (uint32_t) (mtime >> 32);
     } else {
         addr -= ram_start;
         if (addr > RAM_SIZE) {
             *pval = 0;
-            printf("illegal read 32, PC: 0x%08x, address: 0x%08x\n", pc,
-                   addr + ram_start);
+            printf("illegal read 32, PC: 0x%08x, address: 0x%08x\n", pc, addr + ram_start);
             return 1;
         } else {
-            uint8_t *p = ram + addr;
+            uint8_t* p = ram + addr;
             *pval = p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
         }
     }
@@ -857,10 +907,8 @@ int target_read_u32(uint32_t *pval, uint32_t addr)
 int target_write_u8(uint32_t addr, uint8_t val)
 {
 #ifdef DEBUG_EXTRA
-    if ((addr >> 28) != 4 && addr < minmemw)
-        minmemw = addr;
-    if (addr > maxmemw)
-        maxmemw = addr;
+    if((addr>>28)!=4 && addr < minmemw) minmemw = addr;
+    if(addr > maxmemw) maxmemw = addr;
 #endif
     if (addr == UART_TX_ADDR) {
         /* test for UART output, compatible with QEMU */
@@ -868,11 +916,10 @@ int target_write_u8(uint32_t addr, uint8_t val)
     } else {
         addr -= ram_start;
         if (addr > RAM_SIZE - 1) {
-            printf("illegal write 8, PC: 0x%08x, address: 0x%08x\n", pc,
-                   addr + ram_start);
+            printf("illegal write 8, PC: 0x%08x, address: 0x%08x\n", pc, addr + ram_start);
             return 1;
         } else {
-            uint8_t *p = ram + addr;
+            uint8_t* p = ram + addr;
             p[0] = val & 0xff;
         }
     }
@@ -884,10 +931,8 @@ int target_write_u8(uint32_t addr, uint8_t val)
 int target_write_u16(uint32_t addr, uint16_t val)
 {
 #ifdef DEBUG_EXTRA
-    if ((addr >> 28) != 4 && addr < minmemw)
-        minmemw = addr;
-    if (addr + 1 > maxmemw)
-        maxmemw = addr + 1;
+    if((addr>>28)!=4 && addr < minmemw) minmemw = addr;
+    if(addr+1 > maxmemw) maxmemw = addr+1;
 #endif
     if (addr & 1) {
         pending_exception = CAUSE_MISALIGNED_STORE;
@@ -896,11 +941,10 @@ int target_write_u16(uint32_t addr, uint16_t val)
     }
     addr -= ram_start;
     if (addr > RAM_SIZE - 2) {
-        printf("illegal write 16, PC: 0x%08x, address: 0x%08x\n", pc,
-               addr + ram_start);
+        printf("illegal write 16, PC: 0x%08x, address: 0x%08x\n", pc, addr + ram_start);
         return 1;
     } else {
-        uint8_t *p = ram + addr;
+        uint8_t* p = ram + addr;
         p[0] = val & 0xff;
         p[1] = (val >> 8) & 0xff;
     }
@@ -912,10 +956,8 @@ int target_write_u16(uint32_t addr, uint16_t val)
 int target_write_u32(uint32_t addr, uint32_t val)
 {
 #ifdef DEBUG_EXTRA
-    if ((addr >> 28) != 4 && addr < minmemw)
-        minmemw = addr;
-    if (addr + 3 > maxmemw)
-        maxmemw = addr + 3;
+    if((addr>>28)!=4 && addr < minmemw) minmemw = addr;
+    if(addr+3 > maxmemw) maxmemw = addr+3;
 #endif
     if (addr & 3) {
         pending_exception = CAUSE_MISALIGNED_STORE;
@@ -926,16 +968,14 @@ int target_write_u32(uint32_t addr, uint32_t val)
         mtimecmp = (mtimecmp & 0xffffffff00000000ll) | val;
         mip &= ~MIP_MTIP;
     } else if (addr == MTIMECMP_ADDR + 4) {
-        mtimecmp = (mtimecmp & 0xffffffffll) | (((uint64_t) val) << 32);
+        mtimecmp = (mtimecmp & 0xffffffffll) | (((uint64_t)val) << 32);
         mip &= ~MIP_MTIP;
     } else {
         addr -= ram_start;
-        if (addr > RAM_SIZE - 4) {
-            printf("illegal write 32, PC: 0x%08x, address: 0x%08x\n", pc,
-                   addr + ram_start);
+        if (addr > RAM_SIZE - 4)  {
             return 1;
         } else {
-            uint8_t *p = ram + addr;
+            uint8_t* p = ram + addr;
             p[0] = val & 0xff;
             p[1] = (val >> 8) & 0xff;
             p[2] = (val >> 16) & 0xff;
@@ -951,7 +991,7 @@ int32_t div32(int32_t a, int32_t b)
 {
     if (b == 0) {
         return -1;
-    } else if (a == ((int32_t) 1 << (XLEN - 1)) && b == -1) {
+    } else if (a == ((int32_t)1 << (XLEN - 1)) && b == -1) {
         return a;
     } else {
         return a / b;
@@ -962,41 +1002,44 @@ uint32_t divu32(uint32_t a, uint32_t b)
 {
     if (b == 0) {
         return -1;
+    } else {
+        return a / b;
     }
-    return a / b;
 }
 
 int32_t rem32(int32_t a, int32_t b)
 {
     if (b == 0) {
         return a;
-    } else if (a == ((int32_t) 1 << (XLEN - 1)) && b == -1) {
+    } else if (a == ((int32_t)1 << (XLEN - 1)) && b == -1) {
         return 0;
+    } else {
+        return a % b;
     }
-    return a % b;
 }
 
 uint32_t remu32(uint32_t a, uint32_t b)
 {
     if (b == 0) {
         return a;
+    } else {
+        return a % b;
     }
-    return a % b;
 }
 
 static uint32_t mulh32(int32_t a, int32_t b)
 {
-    return ((int64_t) a * (int64_t) b) >> 32;
+    return ((int64_t)a * (int64_t)b) >> 32;
 }
 
 static uint32_t mulhsu32(int32_t a, uint32_t b)
 {
-    return ((int64_t) a * (int64_t) b) >> 32;
+    return ((int64_t)a * (int64_t)b) >> 32;
 }
 
 static uint32_t mulhu32(uint32_t a, uint32_t b)
 {
-    return ((int64_t) a * (int64_t) b) >> 32;
+    return ((int64_t)a * (int64_t)b) >> 32;
 }
 
 #endif
@@ -1048,7 +1091,7 @@ void execute_instruction()
 {
     uint32_t opcode, rd, rs1, rs2, funct3;
     int32_t imm, cond, err;
-    uint32_t addr, val = 0, val2;
+    uint32_t addr, val=0, val2;
 
     uint16_t midpart;
 
@@ -1083,11 +1126,12 @@ void execute_instruction()
 
 
 
-    switch (opcode) {
+    switch(opcode) {
+
     case 0x37: /* lui */
 
 #ifdef DEBUG_EXTRA
-        debug_out(">>> LUI\n");
+        dprintf(">>> LUI\n");
         stats[0]++;
 #endif
         if (rd != 0)
@@ -1097,7 +1141,7 @@ void execute_instruction()
     case 0x17: /* auipc */
 
 #ifdef DEBUG_EXTRA
-        debug_out(">>> AUIPC\n");
+        dprintf(">>> AUIPC\n");
         stats[1]++;
 #endif
         if (rd != 0)
@@ -1107,52 +1151,50 @@ void execute_instruction()
     case 0x6f: /* jal */
 
 #ifdef DEBUG_EXTRA
-        debug_out(">>> JAL\n");
+        dprintf(">>> JAL\n");
         stats[2]++;
 #endif
-        imm = ((insn >> (31 - 20)) & (1 << 20)) | ((insn >> (21 - 1)) & 0x7fe) |
-              ((insn >> (20 - 11)) & (1 << 11)) | (insn & 0xff000);
+        imm = ((insn >> (31 - 20)) & (1 << 20)) |
+              ((insn >> (21 - 1)) & 0x7fe) |
+              ((insn >> (20 - 11)) & (1 << 11)) |
+              (insn & 0xff000);
         imm = (imm << 11) >> 11;
         if (rd != 0)
             reg[rd] = pc + 4;
         next_pc = (int32_t)(pc + imm);
-        if (next_pc > pc)
-            forward_counter++;
-        else
-            backward_counter++;
+        if(next_pc > pc) forward_counter++;
+        else backward_counter++;
         jump_counter++;
         break;
 
     case 0x67: /* jalr */
 
 #ifdef DEBUG_EXTRA
-        debug_out(">>> JALR\n");
+        dprintf(">>> JALR\n");
         stats[3]++;
 #endif
-        imm = (int32_t) insn >> 20;
+        imm = (int32_t)insn >> 20;
         val = pc + 4;
         next_pc = (int32_t)(reg[rs1] + imm) & ~1;
         if (rd != 0)
             reg[rd] = val;
-        if (next_pc > pc)
-            forward_counter++;
-        else
-            backward_counter++;
+        if(next_pc > pc) forward_counter++;
+        else backward_counter++;
         jump_counter++;
         break;
 
     case 0x63: /* BRANCH */
 
         funct3 = (insn >> 12) & 7;
-        switch (funct3 >> 1) {
+        switch(funct3 >> 1) {
         case 0: /* beq/bne */
 #ifdef DEBUG_EXTRA
-            if (!(funct3 & 1)) {
-                debug_out(">>> BEQ\n");
-                stats[4]++;
-            } else {
-                debug_out(">>> BNE\n");
-                stats[5]++;
+            if(!(funct3 & 1)) {
+              dprintf(">>> BEQ\n");
+              stats[4]++;
+            } else  {
+              dprintf(">>> BNE\n");
+              stats[5]++;
             }
 #endif
             cond = (reg[rs1] == reg[rs2]);
@@ -1182,31 +1224,30 @@ void execute_instruction()
         cond ^= (funct3 & 1);
         if (cond) {
             imm = ((insn >> (31 - 12)) & (1 << 12)) |
-                  ((insn >> (25 - 5)) & 0x7e0) | ((insn >> (8 - 1)) & 0x1e) |
+                  ((insn >> (25 - 5)) & 0x7e0) |
+                  ((insn >> (8 - 1)) & 0x1e) |
                   ((insn << (11 - 7)) & (1 << 11));
             imm = (imm << 19) >> 19;
             next_pc = (int32_t)(pc + imm);
-            if (next_pc > pc)
-                forward_counter++;
-            else
-                backward_counter++;
+            if(next_pc > pc) forward_counter++;
+            else backward_counter++;
             jump_counter++;
             true_counter++;
             break;
-        } else
-            false_counter++;
+        } else false_counter++;
         break;
 
     case 0x03: /* LOAD */
 
         funct3 = (insn >> 12) & 7;
-        imm = (int32_t) insn >> 20;
+        imm = (int32_t)insn >> 20;
         addr = reg[rs1] + imm;
-        switch (funct3) {
+        switch(funct3) {
+
         case 0: /* lb */
         {
 #ifdef DEBUG_EXTRA
-            debug_out(">>> LB\n");
+            dprintf(">>> LB\n");
             stats[10]++;
 #endif
             uint8_t rval;
@@ -1214,13 +1255,14 @@ void execute_instruction()
                 raise_exception(pending_exception, pending_tval);
                 return;
             }
-            val = (int8_t) rval;
-        } break;
+            val = (int8_t)rval;
+        }
+        break;
 
         case 1: /* lh */
         {
 #ifdef DEBUG_EXTRA
-            debug_out(">>> LH\n");
+            dprintf(">>> LH\n");
             stats[11]++;
 #endif
             uint16_t rval;
@@ -1228,13 +1270,14 @@ void execute_instruction()
                 raise_exception(pending_exception, pending_tval);
                 return;
             }
-            val = (int16_t) rval;
-        } break;
+            val = (int16_t)rval;
+        }
+        break;
 
         case 2: /* lw */
         {
 #ifdef DEBUG_EXTRA
-            debug_out(">>> LW\n");
+            dprintf(">>> LW\n");
             stats[12]++;
 #endif
             uint32_t rval;
@@ -1242,13 +1285,14 @@ void execute_instruction()
                 raise_exception(pending_exception, pending_tval);
                 return;
             }
-            val = (int32_t) rval;
-        } break;
+            val = (int32_t)rval;
+        }
+        break;
 
         case 4: /* lbu */
         {
 #ifdef DEBUG_EXTRA
-            debug_out(">>> LBU\n");
+            dprintf(">>> LBU\n");
             stats[13]++;
 #endif
             uint8_t rval;
@@ -1257,12 +1301,13 @@ void execute_instruction()
                 return;
             }
             val = rval;
-        } break;
+        }
+        break;
 
         case 5: /* lhu */
         {
 #ifdef DEBUG_EXTRA
-            debug_out(">>> LHU\n");
+            dprintf(">>> LHU\n");
             stats[14]++;
 #endif
             uint16_t rval;
@@ -1271,7 +1316,8 @@ void execute_instruction()
                 return;
             }
             val = rval;
-        } break;
+        }
+        break;
 
         default:
             raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
@@ -1288,10 +1334,11 @@ void execute_instruction()
         imm = (imm << 20) >> 20;
         addr = reg[rs1] + imm;
         val = reg[rs2];
-        switch (funct3) {
+        switch(funct3) {
+
         case 0: /* sb */
 #ifdef DEBUG_EXTRA
-            debug_out(">>> SB\n");
+            dprintf(">>> SB\n");
             stats[15]++;
 #endif
             if (target_write_u8(addr, val)) {
@@ -1302,7 +1349,7 @@ void execute_instruction()
 
         case 1: /* sh */
 #ifdef DEBUG_EXTRA
-            debug_out(">>> SH\n");
+            dprintf(">>> SH\n");
             stats[16]++;
 #endif
             if (target_write_u16(addr, val)) {
@@ -1313,7 +1360,7 @@ void execute_instruction()
 
         case 2: /* sw */
 #ifdef DEBUG_EXTRA
-            debug_out(">>> SW\n");
+            dprintf(">>> SW\n");
             stats[17]++;
 #endif
             if (target_write_u32(addr, val)) {
@@ -1331,20 +1378,19 @@ void execute_instruction()
     case 0x13: /* OP-IMM */
 
         funct3 = (insn >> 12) & 7;
-        imm = (int32_t) insn >> 20;
-        switch (funct3) {
+        imm = (int32_t)insn >> 20;
+        switch(funct3) {
         case 0: /* addi */
 #ifdef DEBUG_EXTRA
-            debug_out(">>> ADDI\n");
+            dprintf(">>> ADDI\n");
             stats[18]++;
-            if (rs1 == 0)
-                stats[47]++; /* li */
+            if(rs1==0) stats[47]++; /* li */
 #endif
             val = (int32_t)(reg[rs1] + imm);
             break;
         case 1: /* slli */
 #ifdef DEBUG_EXTRA
-            debug_out(">>> SLLI\n");
+            dprintf(">>> SLLI\n");
             stats[24]++;
 #endif
             if ((imm & ~(XLEN - 1)) != 0) {
@@ -1355,21 +1401,21 @@ void execute_instruction()
             break;
         case 2: /* slti */
 #ifdef DEBUG_EXTRA
-            debug_out(">>> SLTI\n");
+            dprintf(">>> SLTI\n");
             stats[19]++;
 #endif
-            val = (int32_t) reg[rs1] < (int32_t) imm;
+            val = (int32_t)reg[rs1] < (int32_t)imm;
             break;
         case 3: /* sltiu */
 #ifdef DEBUG_EXTRA
-            debug_out(">>> SLTIU\n");
+            dprintf(">>> SLTIU\n");
             stats[20]++;
 #endif
-            val = reg[rs1] < (uint32_t) imm;
+            val = reg[rs1] < (uint32_t)imm;
             break;
         case 4: /* xori */
 #ifdef DEBUG_EXTRA
-            debug_out(">>> XORI\n");
+            dprintf(">>> XORI\n");
             stats[21]++;
 #endif
             val = reg[rs1] ^ imm;
@@ -1379,30 +1425,33 @@ void execute_instruction()
                 raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
                 return;
             }
-            if (imm & 0x400) {
+            if (imm & 0x400)
+            {
 #ifdef DEBUG_EXTRA
-                debug_out(">>> SRAI\n");
+                dprintf(">>> SRAI\n");
                 stats[26]++;
 #endif
-                val = (int32_t) reg[rs1] >> (imm & (XLEN - 1));
-            } else {
+                val = (int32_t)reg[rs1] >> (imm & (XLEN - 1));
+            }
+            else
+            {
 #ifdef DEBUG_EXTRA
-                debug_out(">>> SRLI\n");
+                dprintf(">>> SRLI\n");
                 stats[25]++;
 #endif
-                val = (int32_t)((uint32_t) reg[rs1] >> (imm & (XLEN - 1)));
+                val = (int32_t)((uint32_t)reg[rs1] >> (imm & (XLEN - 1)));
             }
             break;
         case 6: /* ori */
 #ifdef DEBUG_EXTRA
-            debug_out(">>> ORI\n");
+            dprintf(">>> ORI\n");
             stats[22]++;
 #endif
             val = reg[rs1] | imm;
             break;
         case 7: /* andi */
 #ifdef DEBUG_EXTRA
-            debug_out(">>> ANDI\n");
+            dprintf(">>> ANDI\n");
             stats[23]++;
 #endif
             val = reg[rs1] & imm;
@@ -1420,68 +1469,69 @@ void execute_instruction()
 #ifndef STRICT_RV32I
         if (imm == 1) {
             funct3 = (insn >> 12) & 7;
-            switch (funct3) {
+            switch(funct3) {
             case 0: /* mul */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> MUL\n");
+                dprintf(">>> MUL\n");
                 stats[48]++;
 #endif
-                val = (int32_t)((int32_t) val * (int32_t) val2);
+                val = (int32_t)((int32_t)val * (int32_t)val2);
                 break;
             case 1: /* mulh */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> MULH\n");
+                dprintf(">>> MULH\n");
                 stats[49]++;
 #endif
-                val = (int32_t) mulh32(val, val2);
+                val = (int32_t)mulh32(val, val2);
                 break;
-            case 2: /* mulhsu */
+            case 2:/* mulhsu */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> MULHSU\n");
+                dprintf(">>> MULHSU\n");
                 stats[50]++;
 #endif
-                val = (int32_t) mulhsu32(val, val2);
+                val = (int32_t)mulhsu32(val, val2);
                 break;
-            case 3: /* mulhu */
+            case 3:/* mulhu */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> MULHU\n");
+                dprintf(">>> MULHU\n");
                 stats[51]++;
 #endif
-                val = (int32_t) mulhu32(val, val2);
+                val = (int32_t)mulhu32(val, val2);
                 break;
-            case 4: /* div */
+            case 4:/* div */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> DIV\n");
+                dprintf(">>> DIV\n");
                 stats[52]++;
 #endif
                 val = div32(val, val2);
                 break;
-            case 5: /* divu */
+            case 5:/* divu */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> DIVU\n");
+                dprintf(">>> DIVU\n");
                 stats[53]++;
 #endif
-                val = (int32_t) divu32(val, val2);
+                val = (int32_t)divu32(val, val2);
                 break;
-            case 6: /* rem */
+            case 6:/* rem */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> REM\n");
+                dprintf(">>> REM\n");
                 stats[54]++;
 #endif
                 val = rem32(val, val2);
                 break;
-            case 7: /* remu */
+            case 7:/* remu */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> REMU\n");
+                dprintf(">>> REMU\n");
                 stats[55]++;
 #endif
-                val = (int32_t) remu32(val, val2);
+                val = (int32_t)remu32(val, val2);
                 break;
             default:
                 raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
                 return;
             }
-        } else
+        }
+        else
 #endif
         {
             if (imm & ~0x20) {
@@ -1489,73 +1539,73 @@ void execute_instruction()
                 return;
             }
             funct3 = ((insn >> 12) & 7) | ((insn >> (30 - 3)) & (1 << 3));
-            switch (funct3) {
+            switch(funct3) {
             case 0: /* add */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> ADD\n");
+                dprintf(">>> ADD\n");
                 stats[27]++;
 #endif
                 val = (int32_t)(val + val2);
                 break;
             case 0 | 8: /* sub */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> SUB\n");
+                dprintf(">>> SUB\n");
                 stats[28]++;
 #endif
                 val = (int32_t)(val - val2);
                 break;
             case 1: /* sll */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> SLL\n");
+                dprintf(">>> SLL\n");
                 stats[29]++;
 #endif
                 val = (int32_t)(val << (val2 & (XLEN - 1)));
                 break;
             case 2: /* slt */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> SLT\n");
+                dprintf(">>> SLT\n");
                 stats[30]++;
 #endif
-                val = (int32_t) val < (int32_t) val2;
+                val = (int32_t)val < (int32_t)val2;
                 break;
             case 3: /* sltu */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> SLTU\n");
+                dprintf(">>> SLTU\n");
                 stats[31]++;
 #endif
                 val = val < val2;
                 break;
             case 4: /* xor */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> XOR\n");
+                dprintf(">>> XOR\n");
                 stats[32]++;
 #endif
                 val = val ^ val2;
                 break;
             case 5: /* srl */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> SRL\n");
+                dprintf(">>> SRL\n");
                 stats[33]++;
 #endif
-                val = (int32_t)((uint32_t) val >> (val2 & (XLEN - 1)));
+                val = (int32_t)((uint32_t)val >> (val2 & (XLEN - 1)));
                 break;
             case 5 | 8: /* sra */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> SRA\n");
+                dprintf(">>> SRA\n");
                 stats[34]++;
 #endif
-                val = (int32_t) val >> (val2 & (XLEN - 1));
+                val = (int32_t)val >> (val2 & (XLEN - 1));
                 break;
             case 6: /* or */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> OR\n");
+                dprintf(">>> OR\n");
                 stats[35]++;
 #endif
                 val = val | val2;
                 break;
             case 7: /* and */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> AND\n");
+                dprintf(">>> AND\n");
                 stats[36]++;
 #endif
                 val = val & val2;
@@ -1578,22 +1628,26 @@ void execute_instruction()
         else
             val = reg[rs1];
         funct3 &= 3;
-        switch (funct3) {
+        switch(funct3) {
+
         case 1: /* csrrw & csrrwi */
 #ifdef DEBUG_EXTRA
-            if ((insn >> 12) & 4) {
-                debug_out(">>> CSRRWI\n");
-                stats[44]++;
-            } else {
-                debug_out(">>> CSRRW\n");
-                stats[41]++;
+            if ((insn >> 12) & 4)
+            {
+               dprintf(">>> CSRRWI\n");
+               stats[44]++;
+            }
+            else
+            {
+               dprintf(">>> CSRRW\n");
+               stats[41]++;
             }
 #endif
             if (csr_read(&val2, imm, TRUE)) {
                 raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
                 return;
             }
-            val2 = (int32_t) val2;
+            val2 = (int32_t)val2;
             err = csr_write(imm, val);
             if (err < 0) {
                 raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
@@ -1612,31 +1666,24 @@ void execute_instruction()
                 raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
                 return;
             }
-            val2 = (int32_t) val2;
+            val2 = (int32_t)val2;
 #ifdef DEBUG_EXTRA
-            switch ((insn >> 12) & 7) {
-            case 2:
-                debug_out(">>> CSRRS\n");
-                stats[42]++;
-                break;
-            case 3:
-                debug_out(">>> CSRRC\n");
-                stats[43]++;
-                break;
-            case 6:
-                debug_out(">>> CSRRSI\n");
-                stats[45]++;
-                break;
-            case 7:
-                debug_out(">>> CSRRCI\n");
-                stats[46]++;
-                break;
+            switch((insn >> 12) & 7)
+            {
+               case 2: dprintf(">>> CSRRS\n"); stats[42]++; break;
+               case 3: dprintf(">>> CSRRC\n"); stats[43]++; break;
+               case 6: dprintf(">>> CSRRSI\n"); stats[45]++; break;
+               case 7: dprintf(">>> CSRRCI\n"); stats[46]++; break;
             }
 #endif
-            if (rs1 != 0) {
-                if (funct3 == 2) {
+            if (rs1 != 0)
+            {
+                if (funct3 == 2)
+                {
                     val = val2 | val;
-                } else {
+                }
+                else
+                {
                     val = val2 & ~val;
                 }
                 err = csr_write(imm, val);
@@ -1644,7 +1691,9 @@ void execute_instruction()
                     raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
                     return;
                 }
-            } else {
+            }
+            else
+            {
                 err = 0;
             }
             if (rd != 0)
@@ -1652,10 +1701,10 @@ void execute_instruction()
             break;
 
         case 0:
-            switch (imm) {
+            switch(imm) {
             case 0x000: /* ecall */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> ECALL\n");
+                dprintf(">>> ECALL\n");
                 stats[39]++;
 #endif
                 if (insn & 0x000fff80) {
@@ -1669,17 +1718,20 @@ void execute_instruction()
                  */
                 if (begin_signature) {
                     if (reg[3] & 1) {
-                        debug_out("program end, result: %04x\n", reg[3] >> 1);
+#ifdef DEBUG_OUTPUT
+                        printf("program end, result: %04x\n", reg[3] >> 1);
+#endif
                         machine_running = FALSE;
                         return;
 
                     } else {
-                        debug_out("syscall: %04x\n", reg[3]);
+#ifdef DEBUG_OUTPUT
+                        printf("syscall: %04x\n", reg[3]);
+#endif
                         raise_exception(CAUSE_USER_ECALL + priv, 0);
                     }
                 } else {
-                    /* on real hardware, an exception is raised, the I-ECALL-01
-                     * compliance test tests this as well */
+                    /* on real hardware, an exception is raised, the I-ECALL-01 compliance test tests this as well */
                     raise_exception(CAUSE_USER_ECALL + priv, 0);
                     return;
                 }
@@ -1687,7 +1739,7 @@ void execute_instruction()
 
             case 0x001: /* ebreak */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> EBREAK\n");
+                dprintf(">>> EBREAK\n");
                 stats[40]++;
 #endif
                 if (insn & 0x000fff80) {
@@ -1700,7 +1752,7 @@ void execute_instruction()
             case 0x102: /* sret */
             {
 #ifdef DEBUG_EXTRA
-                debug_out(">>> SRET\n");
+                dprintf(">>> SRET\n");
                 stats[59]++;
 #endif
                 if ((insn & 0x000fff80) || (priv < PRV_S)) {
@@ -1709,11 +1761,12 @@ void execute_instruction()
                 }
                 handle_sret();
                 return;
-            } break;
+            }
+            break;
 
             case 0x105: /* wfi */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> WFI\n");
+                dprintf(">>> WFI\n");
                 stats[61]++;
 #endif
                 /* wait for interrupt: it is allowed to execute it as nop */
@@ -1722,7 +1775,7 @@ void execute_instruction()
             case 0x302: /* mret */
             {
 #ifdef DEBUG_EXTRA
-                debug_out(">>> MRET\n");
+                dprintf(">>> MRET\n");
                 stats[60]++;
 #endif
                 if ((insn & 0x000fff80) || (priv < PRV_M)) {
@@ -1731,12 +1784,13 @@ void execute_instruction()
                 }
                 handle_mret();
                 return;
-            } break;
+            }
+            break;
 
             default:
                 if ((imm >> 5) == 0x09) {
 #ifdef DEBUG_EXTRA
-                    debug_out(">>> SFENCE.VMA\n");
+                    dprintf(">>> SFENCE.VMA\n");
                     stats[62]++;
 #endif
                     /* sfence.vma */
@@ -1761,10 +1815,11 @@ void execute_instruction()
     case 0x0f: /* MISC-MEM */
 
         funct3 = (insn >> 12) & 7;
-        switch (funct3) {
+        switch(funct3) {
+
         case 0: /* fence */
 #ifdef DEBUG_EXTRA
-            debug_out(">>> FENCE\n");
+            dprintf(">>> FENCE\n");
             stats[37]++;
 #endif
             if (insn & 0xf00fff80) {
@@ -1775,7 +1830,7 @@ void execute_instruction()
 
         case 1: /* fence.i */
 #ifdef DEBUG_EXTRA
-            debug_out(">>> FENCE.I\n");
+            dprintf(">>> FENCE.I\n");
             stats[38]++;
 #endif
             if (insn != 0x0000100f) {
@@ -1795,16 +1850,18 @@ void execute_instruction()
     case 0x2f: /* AMO */
 
         funct3 = (insn >> 12) & 7;
-        switch (funct3) {
-        case 2: {
+        switch(funct3) {
+        case 2:
+        {
             uint32_t rval;
 
             addr = reg[rs1];
             funct3 = insn >> 27;
-            switch (funct3) {
+            switch(funct3) {
+
             case 2: /* lr.w */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> LR.W\n");
+                dprintf(">>> LR.W\n");
                 stats[56]++;
 #endif
                 if (rs2 != 0) {
@@ -1815,13 +1872,13 @@ void execute_instruction()
                     raise_exception(pending_exception, pending_tval);
                     return;
                 }
-                val = (int32_t) rval;
+                val = (int32_t)rval;
                 load_res = addr;
                 break;
 
             case 3: /* sc.w */
 #ifdef DEBUG_EXTRA
-                debug_out(">>> SC.W\n");
+                dprintf(">>> SC.W\n");
                 stats[57]++;
 #endif
                 if (load_res == addr) {
@@ -1835,27 +1892,27 @@ void execute_instruction()
                 }
                 break;
 
-            case 1:    /* amiswap.w */
-            case 0:    /* amoadd.w */
-            case 4:    /* amoxor.w */
-            case 0xc:  /* amoand.w */
-            case 0x8:  /* amoor.w */
+            case 1: /* amiswap.w */
+            case 0: /* amoadd.w */
+            case 4: /* amoxor.w */
+            case 0xc: /* amoand.w */
+            case 0x8: /* amoor.w */
             case 0x10: /* amomin.w */
             case 0x14: /* amomax.w */
             case 0x18: /* amominu.w */
             case 0x1c: /* amomaxu.w */
 
 #ifdef DEBUG_EXTRA
-                debug_out(">>> AM...\n");
+                dprintf(">>> AM...\n");
                 stats[63]++;
 #endif
                 if (target_read_u32(&rval, addr)) {
                     raise_exception(pending_exception, pending_tval);
                     return;
                 }
-                val = (int32_t) rval;
+                val = (int32_t)rval;
                 val2 = reg[rs2];
-                switch (funct3) {
+                switch(funct3) {
                 case 1: /* amiswap.w */
                     break;
                 case 0: /* amoadd.w */
@@ -1871,20 +1928,20 @@ void execute_instruction()
                     val2 = (int32_t)(val | val2);
                     break;
                 case 0x10: /* amomin.w */
-                    if ((int32_t) val < (int32_t) val2)
-                        val2 = (int32_t) val;
+                    if ((int32_t)val < (int32_t)val2)
+                        val2 = (int32_t)val;
                     break;
                 case 0x14: /* amomax.w */
-                    if ((int32_t) val > (int32_t) val2)
-                        val2 = (int32_t) val;
+                    if ((int32_t)val > (int32_t)val2)
+                        val2 = (int32_t)val;
                     break;
                 case 0x18: /* amominu.w */
-                    if ((uint32_t) val < (uint32_t) val2)
-                        val2 = (int32_t) val;
+                    if ((uint32_t)val < (uint32_t)val2)
+                        val2 = (int32_t)val;
                     break;
                 case 0x1c: /* amomaxu.w */
-                    if ((uint32_t) val > (uint32_t) val2)
-                        val2 = (int32_t) val;
+                    if ((uint32_t)val > (uint32_t)val2)
+                        val2 = (int32_t)val;
                     break;
                 default:
                     raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
@@ -1899,7 +1956,8 @@ void execute_instruction()
                 raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
                 return;
             }
-        } break;
+        }
+        break;
         default:
             raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
             return;
@@ -2662,6 +2720,7 @@ void riscv_cpu_interp_x32()
             printf("addr: %08x\n", addr);
 #endif
         }
+<<<<<<< HEAD
         break;
         case 3: /* C.FLW C.LD*/
         {
@@ -2671,18 +2730,17 @@ void riscv_cpu_interp_x32()
             dprintf(">>> C.FLW\n");
             stats[64+5]++;
 #endif
-#ifdef DEBUG_OUTPUT
             dprintf("Unimp insn for rv64c\n");
-#endif
-            break;
-            case 128:
-#ifdef DEBUG_EXTRA
-            dprintf(">>> C.LD\n");
-            stats[64+6]++;
-#endif
+=======
+
+        /* update current PC */
+        pc = next_pc;
+    }
+
 #ifdef DEBUG_OUTPUT
-            dprintf("Unimp insn for rv128c\n");
-#endif
+    printf("done interp %lx int=%x mstatus=%lx prv=%d\n",
+           (uint64_t)insn_counter, mip & mie, (uint64_t)mstatus,
+           priv);
             break;
             }
         }
@@ -3492,8 +3550,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    for (uint32_t u = 0; u < RAM_SIZE; u++)
-        ram[u] = 0;
+    for(uint32_t u=0;u<RAM_SIZE;u++) ram[u]=0;
 
 
 #ifdef DEBUG_EXTRA
@@ -3531,12 +3588,12 @@ int main(int argc, char **argv)
 
                 /* for compliance test */
                 if (strcmp(name, "_start") == 0) {
-                    start = sym.st_value;
+                    ram_start = sym.st_value;
                 }
 
                 /* for zephyr */
                 if (strcmp(name, "__reset") == 0) {
-                    start = sym.st_value;
+                    ram_start = sym.st_value;
                 }
                 if (strcmp(name, "__irq_wrapper") == 0) {
                     mtvec = sym.st_value;
@@ -3544,54 +3601,37 @@ int main(int argc, char **argv)
             }
         }
     }
-
-    /* set .text section as the base address */
-    scn = NULL;
-    size_t shstrndx;
-    elf_getshdrstrndx(elf, &shstrndx);
-    while ((scn = elf_nextscn(elf, scn)) != NULL) {
-        gelf_getshdr(scn, &shdr);
-        const char *name = elf_strptr(elf, shstrndx, shdr.sh_name);
-
-        if (shdr.sh_type == SHT_PROGBITS) {
-            if (strcmp(name, ".text") == 0) {
-                ram_start = shdr.sh_addr;
-                break;
-            }
-        }
-    }
-
-    debug_out("begin_signature: 0x%08x\n", begin_signature);
-    debug_out("end_signature: 0x%08x\n", end_signature);
-    debug_out("ram_start: 0x%08x\n", ram_start);
-    debug_out("entry point: 0x%08x\n", start);
+#ifdef DEBUG_OUTPUT
+    printf("begin_signature: 0x%08x\n", begin_signature);
+    printf("end_signature: 0x%08x\n", end_signature);
+    printf("start: 0x%08x\n", ram_start);
+#endif
 
     /* scan for program */
-    scn = NULL;
     while ((scn = elf_nextscn(elf, scn)) != NULL) {
         gelf_getshdr(scn, &shdr);
-
-        /* filter NULL address sections and .bss */
-        if (shdr.sh_addr && shdr.sh_type != SHT_NOBITS) {
+        if (shdr.sh_type == SHT_PROGBITS) {
             Elf_Data *data = elf_getdata(scn, NULL);
             if (shdr.sh_addr >= ram_start) {
                 for (size_t i = 0; i < shdr.sh_size; i++) {
                     ram_curr = shdr.sh_addr + i - ram_start;
-                    if (ram_curr >= RAM_SIZE) {
-                        debug_out(
-                            "memory pointer outside of range 0x%08x (section "
-                            "at address 0x%08x)\n",
-                            ram_curr, (uint32_t) shdr.sh_addr);
+                    if(ram_curr >= RAM_SIZE)
+                    {
+#ifdef DEBUG_OUTPUT
+                        printf("memory pointer outside of range 0x%08x (section at address 0x%08x)\n", ram_curr, (uint32_t) shdr.sh_addr);
+#endif
                         /* break; */
-                    } else {
-                        ram[ram_curr] = ((uint8_t *) data->d_buf)[i];
-                        if (ram_curr > ram_last)
-                            ram_last = ram_curr;
+                    }
+                    else
+                    {
+                        ram[ram_curr] = ((uint8_t *)data->d_buf)[i];
+                        if(ram_curr > ram_last) ram_last = ram_curr;
                     }
                 }
             } else {
-                debug_out("ignoring section at address 0x%08x\n",
-                          (uint32_t) shdr.sh_addr);
+#ifdef DEBUG_OUTPUT
+                printf("ignoring section at address 0x%08x\n", (uint32_t) shdr.sh_addr);
+#endif
             }
         }
     }
@@ -3601,56 +3641,54 @@ int main(int argc, char **argv)
     close(fd);
 
 #ifdef DEBUG_OUTPUT
-    printf("codesize: 0x%08x (%i)\n", ram_last + 1, ram_last + 1);
+    printf("codesize: 0x%08x (%i)\n", ram_last+1, ram_last+1);
     strcpy(hex_file, elf_file);
-    po = strrchr(hex_file, '.');
-    if (po != NULL)
-        *po = 0;
-    strcat(hex_file, ".mem");
-    fo = fopen(hex_file, "wt");
-    if (fo != NULL) {
-        for (uint32_t u = 0; u <= ram_last; u++) {
-            fprintf(fo, "%02X ", ram[u]);
-            if ((u & 15) == 15)
-                fprintf(fo, "\n");
-        }
-        fprintf(fo, "\n");
-        fclose(fo);
+    po = strrchr(hex_file,'.');
+    if(po!=NULL) *po = 0;
+    strcat(hex_file,".mem");
+    fo = fopen(hex_file,"wt");
+    if(fo!=NULL)
+    {
+       for(uint32_t u=0;u<=ram_last;u++)
+       {
+          fprintf(fo,"%02X ",ram[u]);
+          if((u&15)==15) fprintf(fo,"\n");
+       }
+       fprintf(fo,"\n");
+       fclose(fo);
     }
 #if 1
-    fo = fopen("rom.v", "wt");
-    if (fo != NULL) {
-        fprintf(fo, "module rom(addr,data);\n");
-        uint32_t romsz = (ram_start & 0xFFFF) + ram_last + 1;
-        printf("codesize with offset: %i\n", romsz);
-        if (romsz >= 32768)
-            fprintf(fo, "input [15:0] addr;\n");
-        else if (romsz >= 16384)
-            fprintf(fo, "input [14:0] addr;\n");
-        else if (romsz >= 8192)
-            fprintf(fo, "input [13:0] addr;\n");
-        else if (romsz >= 4096)
-            fprintf(fo, "input [12:0] addr;\n");
-        else if (romsz >= 2048)
-            fprintf(fo, "input [11:0] addr;\n");
-        else if (romsz >= 1024)
-            fprintf(fo, "input [10:0] addr;\n");
-        else if (romsz >= 512)
-            fprintf(fo, "input [9:0] addr;\n");
-        else if (romsz >= 256)
-            fprintf(fo, "input [8:0] addr;\n");
-        else
-            fprintf(fo, "input [7:0] addr;\n");
-        fprintf(fo,
-                "output reg [7:0] data;\nalways @(addr) begin\n case(addr)\n");
-        for (uint32_t u = 0; u <= ram_last; u++) {
-            fprintf(fo, " %i : data = 8'h%02X;\n", (ram_start & 0xFFFF) + u,
-                    ram[u]);
-        }
-        fprintf(fo,
-                " default: data = 8'h01; // invalid instruction\n "
-                "endcase\nend\nendmodule\n");
-        fclose(fo);
+    fo = fopen("rom.v","wt");
+    if(fo!=NULL)
+    {
+       fprintf(fo,"module rom(addr,data);\n");
+       uint32_t romsz = (ram_start&0xFFFF) + ram_last + 1;
+       printf("codesize with offset: %i\n",romsz);
+       if(romsz >= 32768)
+          fprintf(fo,"input [15:0] addr;\n");
+       else if(romsz >= 16384)
+          fprintf(fo,"input [14:0] addr;\n");
+       else if(romsz >= 8192)
+          fprintf(fo,"input [13:0] addr;\n");
+       else if(romsz >= 4096)
+          fprintf(fo,"input [12:0] addr;\n");
+       else if(romsz >= 2048)
+          fprintf(fo,"input [11:0] addr;\n");
+       else if(romsz >= 1024)
+          fprintf(fo,"input [10:0] addr;\n");
+       else if(romsz >= 512)
+          fprintf(fo,"input [9:0] addr;\n");
+       else if(romsz >= 256)
+          fprintf(fo,"input [8:0] addr;\n");
+       else
+          fprintf(fo,"input [7:0] addr;\n");
+       fprintf(fo,"output reg [7:0] data;\nalways @(addr) begin\n case(addr)\n");
+       for(uint32_t u=0;u<=ram_last;u++)
+       {
+          fprintf(fo," %i : data = 8'h%02X;\n",(ram_start&0xFFFF)+u,ram[u]);
+       }
+       fprintf(fo," default: data = 8'h01; // invalid instruction\n endcase\nend\nendmodule\n");
+       fclose(fo);
     }
 #endif
 #endif
@@ -3719,20 +3757,10 @@ int main(int argc, char **argv)
 
 #if 1
     printf("\n");
-    printf(">>> Execution time: %llu ns\n", (long long unsigned) ns2 - ns1);
-    printf(">>> Instruction count: %llu (IPS=%llu)\n",
-           (long long unsigned) insn_counter,
-           (long long) insn_counter * 1000000000LL / (ns2 - ns1));
-    printf(">>> Jumps: %llu (%2.2lf%%) - %llu forwards, %llu backwards\n",
-           (long long unsigned) jump_counter,
-           jump_counter * 100.0 / insn_counter,
-           (long long unsigned) forward_counter,
-           (long long unsigned) backward_counter);
-    printf(">>> Branching T=%llu (%2.2lf%%) F=%llu (%2.2lf%%)\n",
-           (long long unsigned) true_counter,
-           true_counter * 100.0 / (true_counter + false_counter),
-           (long long unsigned) false_counter,
-           false_counter * 100.0 / (true_counter + false_counter));
+    printf(">>> Execution time: %llu ns\n",(long long unsigned)ns2-ns1);
+    printf(">>> Instruction count: %llu (IPS=%llu)\n",(long long unsigned)insn_counter,(long long)insn_counter*1000000000LL/(ns2-ns1));
+    printf(">>> Jumps: %llu (%2.2lf%%) - %llu forwards, %llu backwards\n",(long long unsigned)jump_counter,jump_counter*100.0/insn_counter,(long long unsigned)forward_counter,(long long unsigned)backward_counter);
+    printf(">>> Branching T=%llu (%2.2lf%%) F=%llu (%2.2lf%%)\n",(long long unsigned)true_counter,true_counter*100.0/(true_counter+false_counter),(long long unsigned)false_counter,false_counter*100.0/(true_counter+false_counter));
     printf("\n");
 #endif
     return 0;
