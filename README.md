@@ -1,4 +1,4 @@
-# RISC-V RV32I[MAC] emulator with ELF support
+# RISC-V RV32I[MA] emulator with ELF support
 
 This is a RISC-V emulator for the RV32I architecture, based on [TinyEMU](https://bellard.org/tinyemu/)
 and stripped down for RV32I only.
@@ -21,8 +21,19 @@ Passed RV32I compliance tests from https://github.com/riscv/riscv-compliance
 - Must install the [risc-v toolchain](https://xpack.github.io/riscv-none-embed-gcc/)
 ```shell
 $ git clone https://github.com/riscv/riscv-compliance
-$ cd riscv-compliance
+$ cd rv32emu
+$ cp rv32emu ../riscv-compliance/riscv-target
+$ cd ../riscv-compliance
 $ make RISCV_PREFIX=riscv-none-embed- RISCV_DEVICE=rv32i TARGET_SIM=emu-rv32i variant
+```
+- Run RV32IMC compliance tests.
+Assume `emu-rv32i` in `$PATH` environment variable.
+```shell
+$ git clone https://github.com/riscv/riscv-compliance
+$ cd rv32emu
+$ cp rv32emu ../riscv-compliance/riscv-target # If having copied the makefile.include to riscv-compliance, it can be ignored.
+$ cd riscv-compliance
+$ make RISCV_PREFIX=riscv-none-embed- RISCV_DEVICE=rv32imc TARGET_SIM=/abs/path/to/emu-rv32i variant
 ```
 
 Compiling and running simple code:

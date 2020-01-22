@@ -22,8 +22,8 @@
 #include <gelf.h>
 #include <getopt.h>
 /* uncomment this for an instruction trace and other debug outputs */
-// #define DEBUG_OUTPUT
-// #define DEBUG_EXTRA
+#define DEBUG_OUTPUT
+#define DEBUG_EXTRA
 
 #define STRICT_RV32I
 #define FALSE (0)
@@ -633,21 +633,6 @@ void raise_exception(uint32_t cause, uint32_t tval)
         debug_out("raise_exception: illegal instruction 0x%x 0x%x\n", cause,
                   tval);
         machine_running = FALSE;
-        return;
-    }
-
-    switch(cause){
-    case CAUSE_MACHINE_ECALL:
-        printf("Unimplement Machine ecall!\n");
-        return;
-    case CAUSE_USER_ECALL:
-        printf("Unimplement User ecall!\n");
-        return;
-    case CAUSE_SUPERVISOR_ECALL:
-        printf("Unimplement Supervisor ecall!\n");
-        return;
-    case CAUSE_HYPERVISOR_ECALL:
-        printf("Unimplement Hypervisor ecall!\n");
         return;
     }
 
@@ -2252,10 +2237,17 @@ void riscv_cpu_interp_x32()
             execute_instruction();
         }
 
-        /* test for misaligned fetches , in order to match the compressed instruction. */
+        /* test for misaligned fetches , in order to match the compressed
+         * instruction. */
+#ifdef RV32C
         if (next_pc & 0x1) {
             raise_exception(CAUSE_MISALIGNED_FETCH, next_pc);
         }
+#else
+        if (next_pc & 0x3) {
+            raise_exception(CAUSE_MISALIGNED_FETCH, next_pc);
+        }
+#endif
 
         /* update current PC */
         pc = next_pc;
@@ -2275,30 +2267,38 @@ int main(int argc, char **argv)
     /* automatic STDOUT flushing, no fflush needed */
     setvbuf(stdout, NULL, _IONBF, 0);
     /* parse command line */
-    const char* elf_file = NULL;
+    const char *elf_file = NULL;
+    int output_flag = 0;
+    const char *output_file = NULL;
+    const char *elf_name = NULL;
     const char* signature_file = NULL;
-    const char* output_file = NULL;
     int cmd_opt = 0;
-    struct option opts[] = {
-        {"elf", 1, NULL, 'e'},
-        {"signature", 1, NULL, 's'},
-        {"output", 1, NULL, 'o'}
-    };
-    const char* optstring = "e:s:o:";
-    while((cmd_opt = getopt_long(argc, argv, optstring, opts, NULL)) != -1){
-        switch(cmd_opt){
-            case 'e':
-                elf_file = optarg;
-                break;
-            case 's':
-                signature_file = optarg;
-                break;
-            case 'o':
-                output_file = optarg;
-                break;
-            default:
-                printf("Unknow argument: %s\n", optarg);
-                break;
+    struct option opts[] = {{"elf", 1, NULL, 'e'},
+                            {"verify", 1, NULL, 'v'},
+                            {"signaturedump", 0, NULL, 's'}};
+    const char *optstring = "e:s:o:";
+    while ((cmd_opt = getopt_long(argc, argv, optstring, opts, NULL)) != -1) {
+        switch (cmd_opt) {
+        case 'e':
+            elf_file = optarg;
+            elf_name = strtok(strdup(elf_file), ".");
+            printf("%s\n", elf_name);
+            output_file = malloc(strlen(elf_name) + 30);
+            memset(output_file, '\0', strlen(elf_name) + 30);
+            strcat(output_file, elf_name);
+            strcat(output_file, ".signature.output");
+            printf("signature.output : %s\n", output_file);
+            break;
+        case 'v':
+            //signature_file = optarg;
+            break;
+        case 's':
+            //output_file = optarg;
+            output_flag = 1;
+            break;
+        default:
+            printf("Unknow argument: %s\n", optarg);
+            break;
         }
     }
     if (elf_file == NULL) {
@@ -2366,9 +2366,13 @@ int main(int argc, char **argv)
     while ((scn = elf_nextscn(elf, scn)) != NULL) {
         gelf_getshdr(scn, &shdr);
         const char *name = elf_strptr(elf, shstrndx, shdr.sh_name);
-
+        printf("section name: %s\n", name);
+        printf("Type: %d\n", shdr.sh_type);
         if (shdr.sh_type == SHT_PROGBITS) {
             if (strcmp(name, ".text") == 0) {
+                ram_start = shdr.sh_addr;
+                break;
+            }else if(strcmp(name, ".text.init") == 0){
                 ram_start = shdr.sh_addr;
                 break;
             }
