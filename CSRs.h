@@ -5,8 +5,8 @@
 /*
 RISCV emulator for the RV32I architecture
 based on TinyEMU by Fabrice Bellard, see https://bellard.org/tinyemu/
-stripped down for RV32I only, all "gotos" removed, and fixed some bugs for the compliance test
-by Frank Buss, 2018
+stripped down for RV32I only, all "gotos" removed, and fixed some bugs for the
+compliance test by Frank Buss, 2018
 
 Requires libelf-dev:
 
@@ -18,10 +18,12 @@ Compile it like this:
 gcc -O3 -Wall -lelf emu-rv32i.c -o emu-rv32i
 
 
-It is compatible to Spike for the command line arguments, which means you can run
-the compliance test from https://github.com/riscv/riscv-compliance like this:
+It is compatible to Spike for the command line arguments, which means you can
+run the compliance test from https://github.com/riscv/riscv-compliance like
+this:
 
-make RISCV_TARGET=spike RISCV_DEVICE=rv32i TARGET_SIM=/full/path/emulator variant
+make RISCV_TARGET=spike RISCV_DEVICE=rv32i TARGET_SIM=/full/path/emulator
+variant
 
 It is also compatible with qemu32, as it is used for Zephyr. You can compile the
 Zephyr examples for qemu like this:
@@ -73,19 +75,19 @@ original copyright:
 // ====================================================== //
 // =================== User Trap Setup ================== //
 // ====================================================== //
-uint32_t ustatus;           /* User status register  */
-uint32_t uie;               /* User interrupt-enable register */
-uint32_t utvec;             /* User trap handler base address */
+uint32_t ustatus; /* User status register  */
+uint32_t uie;     /* User interrupt-enable register */
+uint32_t utvec;   /* User trap handler base address */
 // ====================================================== //
 // ================= User Trap Handling ================= //
 // ====================================================== //
-uint32_t uscratch;           /* Scratch register for user trap handlers*/
-uint32_t uepc;               /* User exception program counter */
-uint32_t ucause;             /* User trap cause*/
-uint32_t ubadaddr;           /* User bad address */
-uint32_t uip;                /* User interrupt pending */
+uint32_t uscratch; /* Scratch register for user trap handlers*/
+uint32_t uepc;     /* User exception program counter */
+uint32_t ucause;   /* User trap cause*/
+uint32_t ubadaddr; /* User bad address */
+uint32_t uip;      /* User interrupt pending */
 // ====================================================== //
 // ============== User Floating-Point CSRs ============== //
 // ====================================================== //
-uint32_t fflags;             /* Floating-Point Accrued Exceptions*/
-uint32_t frm;                /* Floating-Point Dynamic Rounding Mode*/
+uint32_t fflags; /* Floating-Point Accrued Exceptions*/
+uint32_t frm;    /* Floating-Point Dynamic Rounding Mode*/
