@@ -4,7 +4,7 @@ else
     ARCH := Linux64
 endif
 
-TARGET_SIM   ?= /home/nober/git/adv_CO/riscv-compliance/riscv-ovpsim/bin/Linux64/riscvOVPsim.exe
+TARGET_SIM   ?=
 TARGET_FLAGS ?= $(RISCV_TARGET_FLAGS)
 ifeq ($(shell command -v $(TARGET_SIM) 2> /dev/null),)
     $(error Target simulator executable '$(TARGET_SIM)` not found)
