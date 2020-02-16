@@ -22,14 +22,14 @@ Passed RV32I compliance tests from https://github.com/riscv/riscv-compliance
 ```shell
 $ git clone https://github.com/riscv/riscv-compliance
 $ cd riscv-compliance
-$ make RISCV_PREFIX=riscv-none-embed- RISCV_DEVICE=rv32i TARGET_SIM=/home/nober/git/adv_CO/rv32emu/emu-rv32i RISCV_TARGET=rv32emu TARGETDIR=/abs/to/riscv-target variant
+$ make RISCV_PREFIX=riscv-none-embed- RISCV_DEVICE=rv32i TARGET_SIM=/abs/to/emu-rv32i RISCV_TARGET=rv32emu TARGETDIR=/abs/to/riscv-target variant
 ```
 - Run RV32IMC compliance tests.
 Assume `emu-rv32i` in `$PATH` environment variable.
 ```shell
 $ git clone https://github.com/riscv/riscv-compliance
 $ cd riscv-compliance
-$ make RISCV_PREFIX=riscv-none-embed- RISCV_DEVICE=rv32imc TARGET_SIM=/home/nober/git/adv_CO/rv32emu/emu-rv32i RISCV_TARGET=rv32emu TARGETDIR=/abs/to/riscv-target variant
+$ make RISCV_PREFIX=riscv-none-embed- RISCV_DEVICE=rv32imc TARGET_SIM=/abs/to/rv32emu/emu-rv32i RISCV_TARGET=rv32emu TARGETDIR=/abs/to/riscv-target variant
 ```
 
 Compiling and running simple code:
