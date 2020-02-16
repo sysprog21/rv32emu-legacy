@@ -160,10 +160,6 @@ int machine_running = TRUE;
 #define PRV_H 2
 #define PRV_M 3
 
-/* Instruction state*/
-#define CINSN 1
-#define INSN 0
-unsigned char insn_type;
 
 /* CPU state */
 uint32_t pc;
