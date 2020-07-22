@@ -3,7 +3,7 @@ BINS = emu-rv32i test1
 CROSS_COMPILE = riscv-none-embed-
 RV32I_CFLAGS = -march=rv32i -mabi=ilp32 -O3 -nostdlib
 
-CFLAGS = -O3 -Wall
+CFLAGS = -O3 -Wall -std=gnu99
 LDFLAGS = -lelf
 
 all: $(BINS)
