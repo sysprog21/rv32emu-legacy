@@ -10,7 +10,7 @@ $ sudo apt-get install libelf-dev
 
 How to compile it:
 ```shell
-$ gcc -O3 -Wall -lelf emu-rv32i.c -o emu-rv32i
+$ gcc -O3 -Wall emu-rv32i.c -o emu-rv32i -lelf
 ```
 
 Run RV32I compliance tests.
