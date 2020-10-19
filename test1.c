@@ -3,8 +3,8 @@
 */
 void _start()
 {
-    volatile char* tx = (volatile char*) 0x40002000;
-    const char* hello = "Hello RISC-V!\n";
+    volatile char *tx = (volatile char *) 0x40002000;
+    const char *hello = "Hello RISC-V!\n";
     while (*hello) {
         *tx = *hello;
         hello++;

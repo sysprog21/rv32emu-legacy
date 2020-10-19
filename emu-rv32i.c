@@ -9,6 +9,7 @@
 
 #include <fcntl.h>
 #include <gelf.h>
+#include <getopt.h>
 #include <libelf.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,6 +24,8 @@
 // #define DEBUG_OUTPUT
 // #define DEBUG_EXTRA
 
+
+/* added by Shaos: */
 #define STRICT_RV32I
 #define FALSE (0)
 #define TRUE (-1)
@@ -33,23 +36,43 @@ uint32_t minmemr, maxmemr, minmemw, maxmemw;
 
 #define STATS_NUM 64
 
-unsigned int stats[STATS_NUM], top[5], itop[5];
+#if defined(RV32C)
+#define C_STATS_NUM 64
+#else
+#define C_STATS_NUM 0
+#endif
 
-char statnames[64][16] = {
-    "LUI",   "AUIPC",  "JAL",    "JALR",    "BEQ",    "BNE",    "BLT",
-    "BGE",   "BLTU",   "BGEU",   "LB",      "LH",     "LW",     "LBU",
-    "LHU",   "SB",     "SH",     "SW",      "ADDI",   "SLTI",   "SLTIU",
-    "XORI",  "ORI",    "ANDI",   "SLLI",    "SRLI",   "SRAI",   "ADD",
-    "SUB",   "SLL",    "SLT",    "SLTU",    "XOR",    "SRL",    "SRA",
-    "OR",    "AND",    "FENCE",  "FENCE.I", "ECALL",  "EBREAK", "CSRRW",
-    "CSRRS", "CSRRC",  "CSRRWI", "CSRRSI",  "CSRRCI", "LI*",    "MUL",
-    "MULH",  "MULHSU", "MULHU",  "DIV",     "DIVU",   "REM",    "REMU",
-    "LR.W",  "SC.W",   "URET",   "SRET",    "MRET",   "WFI",    "SFENCE.VMA",
-    ""};
+unsigned int stats[STATS_NUM + C_STATS_NUM], top[5], itop[5];
+char statnames[STATS_NUM + C_STATS_NUM][16] = {
+    "LUI",        "AUIPC",      "JAL",        "JALR",     "BEQ",     "BNE",
+    "BLT",        "BGE",        "BLTU",       "BGEU",     "LB",      "LH",
+    "LW",         "LBU",        "LHU",        "SB",       "SH",      "SW",
+    "ADDI",       "SLTI",       "SLTIU",      "XORI",     "ORI",     "ANDI",
+    "SLLI",       "SRLI",       "SRAI",       "ADD",      "SUB",     "SLL",
+    "SLT",        "SLTU",       "XOR",        "SRL",      "SRA",     "OR",
+    "AND",        "FENCE",      "FENCE.I",    "ECALL",    "EBREAK",  "CSRRW",
+    "CSRRS",      "CSRRC",      "CSRRWI",     "CSRRSI",   "CSRRCI",  "LI*",
+    "MUL",        "MULH",       "MULHSU",     "MULHU",    "DIV",     "DIVU",
+    "REM",        "REMU",       "LR.W",       "SC.W",     "URET",    "SRET",
+    "MRET",       "WFI",        "SFENCE.VMA", "",
+#if defined(RV32C)
+    "ILLINSN",    "C.ADDI4SPN", "C.FLD",      "C.LQ",     "C.LW",    "C.FLW",
+    "C.LD",       "Reserved_0", "C.FSD",      "C.SQ",     "C.SW",    "C.FSW",
+    "C.SD",       "C.NOP",      "C.ADDI",     "C.JAL",    "C.ADDIW", "C.LI",
+    "C.ADDI16SP", "C.LUI",      "C.SRLI",     "C.SRLI64", "C.SRAI",  "C.SRAI64",
+    "C.ANDI",     "C.SUB",      "C.XOR",      "C.OR",     "C.AND",   "C.SUBW",
+    "C.ADDW",     "Reserved_1", "Reserved_2", "C.J",      "C.BEQZ",  "C.BNEZ",
+    "C.SLLI",     "C.SLLI64",   "C.FLDSP",    "C.LQSP",   "C.LWSP",  "C.FLWSP",
+    "C.LDSP",     "C.JR",       "C.MV",       "C.EBREAK", "C.JALR",  "C.ADD",
+    "C.FSDSP",    "C.SQSP",     "C.SWSP",     "C.FSWSP",  "C.SDSP",  "",
+    "",           "",           "",           "",         "",        "",
+    "",           "",           "",           ""
+#endif
+};
 
 void init_stats(void)
 {
-    for (int i = 0; i < STATS_NUM; i++)
+    for (int i = 0; i < STATS_NUM + C_STATS_NUM; i++)
         stats[i] = 0;
     minmemr = minmemw = ~0;
     maxmemr = maxmemw = 0;
@@ -60,7 +83,7 @@ void print_stats(uint64_t total)
     printf("\nInstructions Stat:\n");
     top[0] = top[1] = top[2] = top[3] = top[4] = stats[0];
     itop[0] = itop[1] = itop[2] = itop[3] = itop[4] = 0;
-    for (int i = 0; i < STATS_NUM; i++) {
+    for (int i = 0; i < STATS_NUM + C_STATS_NUM; i++) {
         if (stats[i] > top[0]) {
             top[4] = top[3];
             itop[4] = itop[3];
@@ -98,7 +121,7 @@ void print_stats(uint64_t total)
             itop[4] = i;
         }
         if (stats[i]) {
-            if (i < 63)
+            if (i < STATS_NUM + C_STATS_NUM - 11)
                 printf("%s\t= %u\n", statnames[i], stats[i]);
             else
                 printf("[%i] = %u\n", i, stats[i]);
@@ -140,7 +163,7 @@ uint64_t mtimecmp;
 /* virtual start address for index 0 in the ram array */
 uint32_t ram_start;
 
-/* program entry point */
+/* Program entry point */
 uint32_t start;
 
 /* last byte of the memory initialized and temporary value */
@@ -153,6 +176,7 @@ uint32_t end_signature = 0;
 
 /* is set to false to exit the emulator */
 int machine_running = TRUE;
+unsigned char state = 0;
 
 /* privilege levels */
 #define PRV_U 0
@@ -160,11 +184,17 @@ int machine_running = TRUE;
 #define PRV_H 2
 #define PRV_M 3
 
+/* Instruction state*/
+#define CINSN 1
+#define INSN 0
+unsigned char insn_type;
+
 /* CPU state */
 uint32_t pc;
 uint32_t next_pc;
 uint32_t insn;
 uint32_t reg[32];
+
 
 uint8_t priv = PRV_M; /* see PRV_x */
 uint8_t fs;           /* MSTATUS_FS value */
@@ -628,6 +658,21 @@ void raise_exception(uint32_t cause, uint32_t tval)
         return;
     }
 
+    switch (cause) {
+    case CAUSE_MACHINE_ECALL:
+        printf("Unimplement Machine ecall!\n");
+        return;
+    case CAUSE_USER_ECALL:
+        printf("Unimplement User ecall!\n");
+        return;
+    case CAUSE_SUPERVISOR_ECALL:
+        printf("Unimplement Supervisor ecall!\n");
+        return;
+    case CAUSE_HYPERVISOR_ECALL:
+        printf("Unimplement Hypervisor ecall!\n");
+        return;
+    }
+
     if (priv <= PRV_S) {
         /* delegate the exception to the supervisor priviledge */
         if (cause & CAUSE_INTERRUPT)
@@ -703,7 +748,7 @@ int raise_interrupt()
 
 /* read 32-bit instruction from memory by PC */
 
-uint32_t get_insn32(uint32_t pc)
+unsigned char get_insn32(uint32_t pc, uint32_t *insn)
 {
 #ifdef DEBUG_EXTRA
     if (pc && pc < minmemr)
@@ -712,10 +757,25 @@ uint32_t get_insn32(uint32_t pc)
         maxmemr = pc + 3;
 #endif
     uint32_t ptr = pc - ram_start;
-    if (ptr > RAM_SIZE)
+    if (ptr > RAM_SIZE) {
+        *insn = 0;
         return 1;
+    }
     uint8_t *p = ram + ptr;
-    return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
+#ifdef RV32C
+    uint8_t hb, lb;
+    uint16_t temp;
+    hb = p[1];
+    lb = p[0];
+    temp = (hb << 8) | lb;
+    printf("%04x\n", temp);
+    if (temp != 0 && (lb & 0x03) < 3) {
+        *insn = (p[0] | ((p[1] << 8) & 0x0000ffff));
+        return CINSN;
+    }
+#endif
+    *insn = p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
+    return INSN;
 }
 
 /* read 8-bit data from memory */
@@ -1005,10 +1065,22 @@ void execute_instruction()
     int32_t imm, cond, err;
     uint32_t addr, val = 0, val2;
 
-    opcode = insn & 0x7f;
-    rd = (insn >> 7) & 0x1f;
-    rs1 = (insn >> 15) & 0x1f;
-    rs2 = (insn >> 20) & 0x1f;
+    uint16_t midpart;
+
+    if (insn_type == INSN) {
+        opcode = insn & 0x7f;
+        rd = (insn >> 7) & 0x1f;
+        rs1 = (insn >> 15) & 0x1f;
+        rs2 = (insn >> 20) & 0x1f;
+    }
+
+#ifdef RV32C
+    if (insn_type == CINSN) {
+        opcode = insn & 0x3;
+    }
+#endif
+
+
 
     switch (opcode) {
     case 0x37: /* lui */
@@ -1842,7 +1914,821 @@ void execute_instruction()
         break;
 
 #endif
+#ifdef RV32C
+    /* Compressed insn */
+    case 0:
+        funct3 = (insn >> 13) & 0x7;
+        midpart = (insn >> 2) & 0x07ff;
+        switch (funct3) {
+        case 0: /* Illegal instruction, C.ADDI4SPN */
+            switch (midpart) {
+            case 0:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> Illegal instruction\n");
+                stats[64 + 0]++;
+#endif
+                raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                return;
+            default:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.ADDI4SPN\n");
+                stats[64 + 1]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                printf("rd: %d, imm: %d\n", rd, imm);
+#endif
+                rd = (midpart & 0x7) + 8;
+                rs1 = 2;
+                imm = (midpart >> 4) & 0x1 | (midpart >> 2) & 0x2 |
+                      (midpart >> 7) & 0xe | (midpart >> 1) & 0xf0;
+                imm = imm << 2;
+                imm = imm & 0x3ff;
+                val = reg[rs1] + imm;
+                break;
+            }
+            break;
+        case 1: /* C.FLD, C.LQ*/
+        {
+            switch (XLEN) {
+            case 32:
+            case 64: /* C.FLD */
+#ifdef DEBUG_EXTRA
+                debug_out("C.FLD\n");
+                printf("Not support to floating load double");
+                stats[64 + 2]++;
+#endif
+#ifdef DEBUG_OUTPUT
+#endif
+                rd = 0;
+                break;
+            case 128: /* C.LQ*/
+#ifdef DEBUG_EXTRA
+                debug_out("C.LQ\n");
+                printf("Unimp insn\b");
+                stats[64 + 3]++;
+#endif
+#ifdef DEBUG_OUTPUT
+#endif
+                rd = 0;
+                break;
+            }
+        } break;
+        case 2: /* C.LW */
+        {
+#ifdef DEBUG_EXTRA
+            debug_out(">>>C.LW\n");
+            stats[64 + 4]++;
+#endif
+            rs1 = ((midpart >> 5) & 0x7) + 8;
+            rd = (midpart & 0x7) + 8;
+            imm = (midpart >> 4) & 0x1 | (midpart >> 7) & 0xe |
+                  (midpart << 1) & 0x10;
+            imm = (imm << 2) & 0x7f;
+            addr = reg[rs1] + imm;
+            uint32_t rval;
+            if (target_read_u32(&rval, addr)) {
+                raise_exception(pending_exception, pending_tval);
+                return;
+            }
+            val = (int32_t) rval;
 
+#ifdef DEBUG_OUTPUT
+            printf("rs1 : %d, rd: %d, imm: %d\n", rs1, rd, imm);
+            printf("addr: %08x\n", addr);
+#endif
+        } break;
+        case 3: /* C.FLW C.LD*/
+        {
+            switch (XLEN) {
+            case 64:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.FLW\n");
+                stats[64 + 5]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("Unimp insn for rv64c\n");
+#endif
+                break;
+            case 128:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.LD\n");
+                stats[64 + 6]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("Unimp insn for rv128c\n");
+#endif
+                break;
+            }
+        } break;
+        case 4: /* Reserved */
+#ifdef DEBUG_EXTRA
+            debug_out(">>> Reserved_0\n");
+            stats[64 + 7]++;
+#endif
+            break;
+        case 5: /* C.FSD */
+        {
+            switch (XLEN) {
+            case 32:
+            case 64:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.FSD\n");
+                stats[64 + 8]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("Unimp insn for rv32imc");
+#endif
+                break;
+            case 128:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.SQ\n");
+                stats[64 + 9]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("Unimp insn for rv32imc");
+#endif
+                break;
+            default:
+#ifdef DEBUG_OUTPUT
+                raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                return;
+#endif
+                break;
+            }
+        } break;
+        case 6: {
+#ifdef DEBUG_EXTRA
+            debug_out(">>> C.SW\n");
+            stats[64 + 10]++;
+#endif
+            rs1 = ((midpart >> 5) & 0x7) + 8;
+            rs2 = (midpart & 0x7) + 8;
+            imm = ((midpart >> 4) & 0x1) | ((midpart >> 7) & 0xe) |
+                  ((midpart << 1) & 0x10);
+            imm = (imm << 2) & 0x7f;
+            addr = reg[rs1] + imm;
+            val = reg[rs2];
+            rd = 0;
+            if (target_write_u32(addr, val)) {
+                raise_exception(pending_exception, pending_tval);
+                return;
+            }
+#ifdef DEBUG_OUTPUT
+            printf("rs1 : %d, rs2: %d, rd: %d, imm: %d\n", rs1, rs2, rd, imm);
+            printf("addr: %08x\n", addr);
+#endif
+        } break;
+        case 7: {
+            switch (XLEN) {
+            case 32:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.FSW\n");
+                stats[64 + 11]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("Unimp insn for rv32imc");
+#endif
+                break;
+            case 64:
+            case 128:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.SD\n");
+                stats[64 + 12]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("Unsupported insn by rv32imc\n");
+#endif
+                break;
+            }
+        } break;
+        default: {
+            raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+            return;
+        } break;
+        }
+        if (rd != 0)
+            reg[rd] = val;
+        break;
+    case 1:
+        funct3 = (insn >> 13) & 0x7;
+        midpart = (insn >> 2) & 0x07ff;
+        switch (funct3) {
+        case 0:                                 /* C.NOP, C.ADDI */
+            if (((midpart >> 5) & 0x1f) == 0) { /* C.NOP*/
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.NOP\n");
+                stats[64 + 13]++;
+#endif
+                return;
+            } else {
+                rs1 = rd = ((midpart >> 5) & 0x1f);
+                imm = (midpart & 0x1f) | ((midpart >> 5) & 0x20);
+                val = reg[rs1] + imm;
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.ADDI\n");
+                stats[64 + 14]++;
+                printf("rd: %d, rs1: %d, imm: %d, reg[rd]: %d, val: %d\n", rd,
+                       rs1, imm, reg[rd], val);
+#endif
+            }
+            break;
+        case 1: /* C.JAL, C.ADDIW */
+#ifdef DEBUG_EXTRA
+            switch (XLEN) {
+            case 32:
+                debug_out(">>> C.JAL\n");
+                stats[64 + 15]++;
+                break;
+            case 64:
+            case 128:
+                debug_out(">>> C.ADDIW\n");
+                stats[64 + 16]++;
+                break;
+            default:
+                debug_out(">>> Unknow XLEN\n");
+                break;
+            }
+#endif
+            switch (XLEN) {
+            case 32:
+                rd = 0;
+                imm = (midpart & 0x400) | ((midpart << 3) & 0x200) |
+                      (midpart & 0x180) | ((midpart << 2) & 0x40) |
+                      (midpart & 0x20) | ((midpart << 4) & 0x10) |
+                      ((midpart >> 6) & 0x8) | ((midpart >> 1) & 0x7);
+                imm = (imm << 1) & 0xfffe;
+                reg[1] = pc + 2; /* Store the link to x1 register */
+                next_pc = (int32_t)(pc + imm);
+                if (next_pc > pc)
+                    forward_counter++;
+                else
+                    backward_counter++;
+                jump_counter++;
+                break;
+            case 64:
+            case 128:
+                rs1 = rd = ((midpart >> 5) & 0x1f);
+                imm = (midpart >> (11 - 5)) | (midpart & 0x1f);
+                val = reg[rs1] + imm;
+                break;
+            }
+            break;
+        case 2: /* C.LI */
+#ifdef DEBUG_EXTRA
+            debug_out(">>> C.LI\n");
+            stats[64 + 17]++;
+#endif
+            rs1 = rd = ((midpart >> 5) & 0x1f);
+            imm = ((midpart >> 5) & 0x20) | (midpart & 0x1f);
+            imm = imm << 26 >> 26;
+            val = imm;
+            break;
+        case 3: /* C.ADDI16SP, C.LUI */
+            rs1 = rd = ((midpart >> 5) & 0x1f);
+#ifdef DEBUG_EXTRA
+            switch (rd) {
+            case 2:
+                debug_out(">>> C.ADDI16SP\n");
+                stats[64 + 18]++;
+                break;
+            default:
+                debug_out(">>> C.LUI\n");
+                stats[64 + 19]++;
+                break;
+            }
+#endif
+            switch (rd) { /* C.ADDI16SP */
+            case 2:
+                imm = ((midpart >> 4) & 0x1) | ((midpart << 1) & 0x2) |
+                      ((midpart >> 1) & 0x4) | ((midpart << 2) & 0x18) |
+                      ((midpart >> 5) & 0x20);
+                imm = (imm << 4) << (31 - 9) >> (31 - 9);
+                val = reg[rd] + imm;
+                break;
+            default:
+                imm = (midpart & 0x1f) | ((midpart >> 5) & 0x20);
+                imm = (imm << 12);
+                if (imm == 0) {
+                    raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                    return;
+                }
+                if (rd != 0 && rd != 2) {
+                    val = (reg[rd] & ~0x0003f000) | imm;
+                    val = val & 0xfffff000;
+                    val = (int32_t) val << (31 - 17) >> (31 - 17);
+
+                } else {
+                    raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                    return;
+                }
+                break;
+            }
+            break;
+        case 4: /* C.SRLI, C.SRLI64, C.SRAI, C.SRAI64, C.ANDI, C.SUB, C.XOR,
+                   C.OR, C.AND, C.SUBW, C.ADDW*/
+            switch (((midpart >> 8) & 0x3)) {
+            case 0: /* C.SRLI C.SRLI64 */
+#ifdef DEBUG_EXTRA
+                switch (XLEN) {
+                case 32:
+                case 64:
+                    debug_out(">>> C.SRLI\n");
+                    stats[64 + 20]++;
+                    break;
+                case 128:
+                    debug_out(">>> C.SRLI64\n");
+                    stats[64 + 21]++;
+                    break;
+                }
+#endif
+                switch (XLEN) {
+                case 32:
+                    if ((midpart >> 10 & 0x1)) {
+                        raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                        return;
+                    }
+                case 64:
+                    rs1 = rd = ((midpart >> 5) & 0x7) + 8;
+                    imm = (midpart & 0x1f) | (midpart >> 5 & 0x20);
+                    if (imm == 0) {
+                        raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                        return;
+                    }
+                    val = reg[rs1];
+                    break;
+                case 128:
+                    rs1 = rd = ((midpart >> 5) & 0x7) + 8;
+                    imm = 64;
+                    val = reg[rs1];
+                    break;
+                }
+                val = val >> imm;
+                break;
+            case 1: /* C.SRAI C.SRAI64 */
+#ifdef DEBUG_EXTRA
+                switch (XLEN) {
+                case 32:
+                case 64:
+                    debug_out(">>> C.SRAI\n");
+                    stats[64 + 22]++;
+                    break;
+                case 128:
+                    debug_out(">>> C.SRAI64\n");
+                    stats[64 + 23]++;
+                    break;
+                }
+#endif
+                switch (XLEN) {
+                case 32:
+                    if ((midpart >> 10 & 0x1)) {
+                        raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                        return;
+                    }
+                case 64:
+                    rs1 = rd = ((midpart >> 5) & 0x7) + 8;
+                    imm = (midpart & 0x1f) | (midpart >> 5 & 0x20);
+                    if (imm == 0) {
+                        raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                        return;
+                    }
+                    val = reg[rs1];
+                    break;
+                case 128:
+                    rs1 = rd = ((midpart >> 5) & 0x7) + 8;
+                    imm = 64;
+                    val = reg[rs1];
+                    break;
+                }
+                val = (int32_t) val >> imm;
+                break;
+            case 2: /* C.ANDI */
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.ANDI\n");
+                stats[64 + 24]++;
+#endif
+                rs1 = rd = ((midpart >> 5) & 0x7) + 8;
+                imm = (midpart & 0x1f) | ((midpart >> 5) & 0x20);
+                imm = imm << (31 - 5) >> (31 - 5);
+                val = reg[rs1];
+                val = val & imm;
+                break;
+            case 3: /* C.SUB, C.XOR, C.OR, C.AND, C.SUBW, C.ADDW */
+                rs2 = (midpart & 0x7) + 8;
+                rs1 = rd = ((midpart >> 5) & 0x7) + 8;
+                switch (((midpart >> 3) & 0x3) | ((midpart >> 8) & 0x4)) {
+                case 0: /* C.SUB */
+#ifdef DEBUG_EXTRA
+                    debug_out(">>> C.SUB\n");
+                    stats[64 + 25]++;
+#endif
+                    val = reg[rd] - reg[rs2];
+                    break;
+                case 1: /* C.XOR */
+#ifdef DEBUG_EXTRA
+                    debug_out(">>> C.XOR\n");
+                    stats[64 + 26]++;
+#endif
+                    val = reg[rd] ^ reg[rs2];
+                    break;
+                case 2: /* C.OR */
+#ifdef DEBUG_EXTRA
+                    debug_out(">>> C.OR\n");
+                    stats[64 + 27]++;
+#endif
+                    val = reg[rd] | reg[rs2];
+                    // printf("reg[rd]: %08x, reg[rs2]: %08x\n", reg[rd],
+                    // reg[rs2]);
+                    break;
+                case 3: /* C.AND */
+#ifdef DEBUG_EXTRA
+                    debug_out(">>> C.AND\n");
+                    stats[64 + 28]++;
+#endif
+                    val = reg[rd] & reg[rs2];
+                    break;
+                case 4: /* C.SUBW */
+#ifdef DEBUG_EXTRA
+                    debug_out(">>> C.SUBW\n");
+                    stats[64 + 29]++;
+#endif
+                    val = reg[rd] - reg[rs2];
+                    if (XLEN == 128) {
+                        val = (int32_t)(val << 96) >> 96;
+                    } else if (XLEN == 64) {
+                        val = (int32_t)(val << 32) >> 32;
+                    } else {
+                        raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                    }
+                    break;
+                case 5: /* C.ADDW */
+#ifdef DEBUG_EXTRA
+                    debug_out(">>> C.ADDW\n");
+                    stats[64 + 30]++;
+#endif
+                    val = reg[rd] + reg[rs2];
+                    if (XLEN == 128) {
+                        val = (int32_t)(val << 96) >> 96;
+                    } else if (XLEN == 64) {
+                        val = (int32_t)(val << 32) >> 32;
+                    } else {
+                        raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                    }
+                    break;
+                case 6:
+#ifdef DEBUG_EXTRA
+                    debug_out(">>> Reserved_1\n");
+                    stats[64 + 31]++;
+#endif
+                case 7:
+#ifdef DEBUG_EXTRA
+                    debug_out(">>> Reserved_2\n");
+                    stats[64 + 32]++;
+#endif
+                    /* NOP */
+                    break;
+                }
+            }
+            break;
+        case 5: /* C.J */
+#ifdef DEBUG_EXTRA
+            debug_out(">>> C.J\n");
+            stats[64 + 33]++;
+#endif
+            rd = 0;
+            imm = ((midpart >> 1) & 0x7) | ((midpart >> 6) & 0x8) |
+                  ((midpart << 4) & 0x10) | ((midpart) &0x20) |
+                  ((midpart << 2) & 0x40) | ((midpart) &0x180) |
+                  ((midpart << 3) & 0x200) | ((midpart) &0x400);
+            imm = (imm << 1) << 20 >> 20;
+            next_pc = (int32_t)(pc + imm);
+            if (next_pc > pc)
+                forward_counter++;
+            else
+                backward_counter++;
+            jump_counter++;
+            break;
+        case 6: /* C.BEQZ */
+#ifdef DEBUG_EXTRA
+            debug_out(">>> C.BEQZ\n");
+            stats[64 + 34]++;
+#endif
+            rs1 = ((midpart >> 5) & 0x7) + 8;
+            rd = 0;
+            if (reg[rs1] == 0) {
+                imm = ((midpart >> 1) & 0x3) | ((midpart >> 6) & 0xc) |
+                      ((midpart << 4) & 0x10) | ((midpart << 2) & 0x60) |
+                      ((midpart >> 3) & 0x80);
+                imm = (imm << 1) << (31 - 8) >> (31 - 8);
+                next_pc = (int32_t)(pc + imm);
+                if (next_pc > pc)
+                    forward_counter++;
+                else
+                    backward_counter++;
+                jump_counter++;
+            }
+            break;
+        case 7: /* C.BNEZ */
+#ifdef DEBUG_EXTRA
+            debug_out(">>> C.BNEZ\n");
+            stats[64 + 35]++;
+#endif
+            rs1 = ((midpart >> 5) & 0x7) + 8;
+            rd = 0;
+            if (reg[rs1] != 0) {
+                imm = ((midpart >> 1) & 0x3) | ((midpart >> 6) & 0xc) |
+                      ((midpart << 4) & 0x10) | ((midpart << 2) & 0x60) |
+                      ((midpart >> 3) & 0x80);
+                imm = (imm << 1) << (31 - 8) >> (31 - 8);
+                next_pc = (int32_t)(pc + imm);
+                if (next_pc > pc)
+                    forward_counter++;
+                else
+                    backward_counter++;
+                jump_counter++;
+            }
+#ifdef DEBUG_OUTPUT
+            printf(
+                "rd : %d, rs1: %d, imm: %d, reg[rs1] : %d, pc: %08x, next_pc: "
+                "%08x\n",
+                rd, rs1, imm, reg[rs1]);
+#endif
+            break;
+        default:
+            raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+            return;
+        }
+        if (rd != 0) {
+            reg[rd] = val;
+        }
+        break;
+    case 2: /* op 2*/
+        funct3 = (insn >> 13) & 0x7;
+        midpart = (insn >> 2) & 0x07ff;
+        switch (funct3) {
+        case 0: /* C.SLLI, C.SLLI64*/
+        {
+            imm = ((midpart >> 5 & 0x20) | (midpart & 0x1f));
+            switch (XLEN) {
+            case 32: /* C.SLLI*/
+                if (((midpart >> 10) & 0x1)) {
+                    raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                    return;
+                }
+            case 64:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.SLLI\n");
+                stats[64 + 36]++;
+#endif
+                if (imm == 0) {
+                    raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                    return;
+                }
+                rd = ((midpart >> 5) & 0x1f);
+                if (rd == 0) {
+                    raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                    return;
+                }
+                imm = imm & 0x3f;
+                break;
+            case 128: /* C.SLLI64 */
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.SLLI64\n");
+                stats[64 + 37]++;
+#endif
+                rd = ((midpart >> 5) & 0x1f);
+                if (rd == 0) {
+                    raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                    return;
+                }
+                imm = 64;
+
+#ifdef DEBUG_OUTPUT
+                debug_out("Unsupported insn by rv32imc\n");
+#endif
+                break;
+            }
+            if (rd != 0)
+                val = (uint32_t) reg[rd] << imm;
+        } break;
+        case 1: /* C.FLDSP C.LQSP*/
+        {
+            switch (XLEN) {
+            case 32:
+            case 64: /* C.FLDSP */
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.FLDSP\n");
+                stats[64 + 38]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("Unsupported extension by rv32imc");
+#endif
+                break;
+            case 128:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.LQSP\n");
+                stats[64 + 39]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("unsupported extension by rv32imc");
+#endif
+                break;
+            }
+
+        } break;
+        case 2: /* C.LWSP C.FLWSP*/
+        {
+#ifdef DEBUG_EXTRA
+            debug_out(">>> C.LWSP\n");
+            stats[64 + 40]++;
+#endif
+            rd = ((midpart >> 5) & 0x1f);
+            if (rd == 0) {
+                raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                return;
+            }
+            imm = ((midpart >> 2) & 0x7) | ((midpart >> 7) & 0x8) |
+                  ((midpart << 4) & 0x30);
+            imm = (imm << 2) & 0xff;
+            rs1 = 2;
+            addr = reg[rs1] + imm;
+            uint32_t rval;
+            if (target_read_u32(&rval, addr)) {
+                raise_exception(pending_exception, pending_tval);
+                return;
+            }
+            val = (int32_t) rval;
+#ifdef DEBUG_OUTPUT
+#endif
+        } break;
+        case 3: /* C.FLWSP C.LDSP*/
+        {
+            switch (XLEN) {
+            case 32:
+            case 64: /* C.FLWSP */
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.FLWSP\n");
+                stats[64 + 41]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("Unsupported extension by rv32imc");
+#endif
+                break;
+            case 128:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.LDSP\n");
+                stats[64 + 42]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("unsupported extension by rv32imc");
+#endif
+                break;
+            }
+
+        } break;
+        case 4: /* C.JR C.MV C.EBREAK C.JALR C.ADD */
+        {
+            rd = 0;
+            rs1 = (midpart >> 5) & 0x1f;
+            rs2 = (midpart & 0x1f);
+            switch ((midpart >> 10) & 0x1) {
+            case 0:
+                if (rs2 == 0) { /* C.JR */
+#ifdef DEBUG_EXTRA
+                    debug_out(">>> C.JR\n");
+                    stats[64 + 43]++;
+#endif
+                    next_pc = reg[rs1];
+                    if (next_pc > pc)
+                        forward_counter++;
+                    else
+                        backward_counter++;
+                    jump_counter++;
+
+#ifdef DEBUG_OUTPUT
+                    printf("rs1: %d, rs2: %d, rd: %d\n", rs1, rs2, rd);
+#endif
+                } else { /* C.MV */
+#ifdef DEBUG_EXTRA
+                    debug_out(">>> C.MV\n");
+                    stats[64 + 44]++;
+#endif
+                    rd = rs1;
+                    if (rd + rs1 + rs2 == 0) {
+                        raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                        return;
+                    }
+                    val = reg[rs2];
+                }
+                break;
+            case 1:
+                if (rs1 == 0 && rs2 == 0) { /* C.EBREAK */
+#ifdef DEBUG_EXTRA
+                    debug_out(">>> EBREAK\n");
+                    stats[64 + 45]++;
+#endif
+                    raise_exception(CAUSE_BREAKPOINT, 0);
+                    return;
+                } else if (rs2 == 0 && rs1 != 0) { /* C.JALR */
+#ifdef DEBUG_EXTRA
+                    debug_out(">>> C.JALR\n");
+                    stats[64 + 46]++;
+#endif
+                    rd = 1;
+                    imm = reg[rs1];
+                    next_pc = reg[rs1];
+                    val = pc + 2;
+                    if (next_pc > pc)
+                        forward_counter++;
+                    else
+                        backward_counter++;
+                    jump_counter++;
+                } else if (rs2 != 0 && rs1 != 0) { /* C.ADD */
+                    rd = rs1;
+                    val = reg[rs1] + reg[rs2];
+                }
+                break;
+            default:
+                raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+                return;
+            }
+        } break;
+        case 5: /* C.FSDSP C.SQSP*/
+        {
+            switch (XLEN) {
+            case 32:
+            case 64:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.FSDS{\n");
+                stats[64 + 47]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("Unsupported insn of rv32imc\n");
+#endif
+                break;
+            case 128:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.SQSP\n");
+                stats[64 + 48]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("Unsupported insn of rv32imc\n");
+#endif
+                break;
+            }
+        } break;
+        case 6: /* C.SWSP*/
+        {
+#ifdef DEBUG_EXTRA
+            debug_out(">>> C.SWSP\n");
+            stats[64 + 49]++;
+#endif
+            rd = 0;
+            rs2 = midpart & 0x1f;
+            imm = ((midpart >> 2) & 0x1e0) | ((midpart << 4) & 0x600);
+            imm = (imm >> 3) & 0xff;
+            addr = reg[2] + imm;
+            val = reg[rs2];
+#ifdef DEBUG_OUTPUT
+            printf("rs2: %d, imm: %d, addr: %08x\n", rs2, imm, addr);
+#endif
+            if (target_write_u32(addr, val)) {
+                raise_exception(pending_exception, pending_tval);
+                return;
+            }
+            break;
+        } break;
+        case 7: /* C.FSWSP C.SDSP */
+        {
+            switch (XLEN) {
+            case 32:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.FSWSP\n");
+                stats[64 + 50]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("Unsupported insn of rv32imc\n");
+#endif
+                break;
+            case 64:
+            case 128:
+#ifdef DEBUG_EXTRA
+                debug_out(">>> C.SDSP\n");
+                stats[64 + 51]++;
+#endif
+#ifdef DEBUG_OUTPUT
+                debug_out("Unsupported insn of rv32imc\n");
+#endif
+                break;
+            }
+        } break;
+        default:
+            raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
+            return;
+        }
+        if (rd != 0)
+            reg[rd] = val;
+        break;
+#endif
     default:
         raise_exception(CAUSE_ILLEGAL_INSTRUCTION, insn);
         return;
@@ -1884,8 +2770,15 @@ void riscv_cpu_interp_x32()
         if ((mip & mie) != 0 && (mstatus & MSTATUS_MIE)) {
             raise_interrupt();
         } else {
-            /* normal instruction execution */
-            insn = get_insn32(pc);
+            /* Compressed or normal */
+            insn_type = get_insn32(pc, &insn);
+#ifdef RV32C
+            if (insn_type == CINSN)
+                next_pc = pc + 2;
+#endif
+#ifdef DEBUG_EXTRA
+            printf("insn_type : %s\n", insn_type == CINSN ? "CINSN" : "INSN");
+#endif
             insn_counter++;
 
             debug_out("[%08x]=%08x, mtime: %lx, mtimecmp: %lx\n", pc, insn,
@@ -1893,8 +2786,9 @@ void riscv_cpu_interp_x32()
             execute_instruction();
         }
 
-        /* test for misaligned fetches */
-        if (next_pc & 3) {
+        /* test for misaligned fetches , in order to match the compressed
+         * instruction. */
+        if (next_pc & 0x1) {
             raise_exception(CAUSE_MISALIGNED_FETCH, next_pc);
         }
 
@@ -1915,16 +2809,29 @@ int main(int argc, char **argv)
 
     /* automatic STDOUT flushing, no fflush needed */
     setvbuf(stdout, NULL, _IONBF, 0);
-
     /* parse command line */
     const char *elf_file = NULL;
     const char *signature_file = NULL;
-    for (int i = 1; i < argc; i++) {
-        char *arg = argv[i];
-        if (arg == strstr(arg, "+signature=")) {
-            signature_file = arg + 11;
-        } else if (arg[0] != '-') {
-            elf_file = arg;
+    const char *output_file = NULL;
+    int cmd_opt = 0;
+    struct option opts[] = {{"elf", 1, NULL, 'e'},
+                            {"signature", 1, NULL, 's'},
+                            {"output", 1, NULL, 'o'}};
+    const char *optstring = "e:s:o:";
+    while ((cmd_opt = getopt_long(argc, argv, optstring, opts, NULL)) != -1) {
+        switch (cmd_opt) {
+        case 'e':
+            elf_file = optarg;
+            break;
+        case 's':
+            signature_file = optarg;
+            break;
+        case 'o':
+            output_file = optarg;
+            break;
+        default:
+            printf("Unknow argument: %s\n", optarg);
+            break;
         }
     }
     if (elf_file == NULL) {
@@ -1962,6 +2869,10 @@ int main(int argc, char **argv)
                 GElf_Sym sym;
                 gelf_getsym(data, i, &sym);
                 char *name = elf_strptr(elf, shdr.sh_link, sym.st_name);
+#ifdef DEBUG_EXTRA
+                if (*name)
+                    printf("sym '%s' %lx\n", name, sym.st_value);
+#endif
                 if (strcmp(name, "begin_signature") == 0) {
                     begin_signature = sym.st_value;
                 }
@@ -2009,6 +2920,7 @@ int main(int argc, char **argv)
     /* scan for program */
     scn = NULL;
     while ((scn = elf_nextscn(elf, scn)) != NULL) {
+        /* ELF Section Header Table*/
         gelf_getshdr(scn, &shdr);
 
         /* filter NULL address sections and .bss */
@@ -2098,24 +3010,60 @@ int main(int argc, char **argv)
     uint64_t ns1 = get_clock();
 
     /* run program in emulator */
-    pc = start;
+    pc = ram_start;
+    /* Initialize the address of stack pointer*/
     reg[2] = ram_start + RAM_SIZE;
     riscv_cpu_interp_x32();
 
     uint64_t ns2 = get_clock();
 
     /* write signature */
+    /* Check signature */
     if (signature_file) {
-        FILE *sf = fopen(signature_file, "w");
+        FILE *sf = fopen(signature_file, "r");
+        if (sf == NULL) {
+            printf("Error opening file\n");
+            return -1;
+        }
         int size = end_signature - begin_signature;
-        for (int i = 0; i < size / 16; i++) {
-            for (int j = 0; j < 16; j++) {
-                fprintf(sf, "%02x", ram[begin_signature + 15 - j - ram_start]);
+        char temp[50], ans[50];
+        uint32_t tb = begin_signature;
+        int err = 0;
+        for (int i = 0; i < size / 4; i++) {
+            if (fgets(ans, 30, sf) == NULL)
+                break;
+            for (int j = 0; j < 4; j++) {
+                sprintf(temp + strlen(temp), "%02x",
+                        ram[tb + 3 - j - ram_start]);
             }
-            begin_signature += 16;
-            fprintf(sf, "\n");
+            tb += 4;
+            if (strncmp(temp, ans, 8) != 0) {
+                printf("%s -----> %s\n", temp, ans);
+                err++;
+            } else {
+                printf("%s\n", temp);
+            }
+            memset(temp, '\0', 50);
+        }
+        if (err == 0) {
+            printf("%s TEST PASSED\n", elf_file);
+        } else {
+            printf("%s TEST FAILED\n", elf_file);
+            printf("Number of failed signature : %d\n", err);
         }
         fclose(sf);
+    }
+    if (output_file) {
+        FILE *of = fopen(output_file, "w");
+        int size = end_signature - begin_signature;
+        for (int i = 0; i < size / 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                fprintf(of, "%02x", ram[begin_signature + 3 - j - ram_start]);
+            }
+            begin_signature += 4;
+            fprintf(of, "\n");
+        }
+        fclose(of);
     }
 
 #ifdef DEBUG_EXTRA

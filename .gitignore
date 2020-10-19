@@ -1,2 +1,9 @@
 emu-rv32i
 test1
+sig.txt
+rom.v
+debug.txt
+CSR.h
+# ignore generated files
+work
+*.mem
