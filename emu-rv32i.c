@@ -9,6 +9,7 @@
 
 #include <fcntl.h>
 #include <gelf.h>
+#include <getopt.h>
 #include <libelf.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -18,7 +19,6 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
-
 /* uncomment this for an instruction trace and other debug outputs */
 // #define DEBUG_OUTPUT
 // #define DEBUG_EXTRA
@@ -160,11 +160,13 @@ int machine_running = TRUE;
 #define PRV_H 2
 #define PRV_M 3
 
+
 /* CPU state */
 uint32_t pc;
 uint32_t next_pc;
 uint32_t insn;
 uint32_t reg[32];
+
 
 uint8_t priv = PRV_M; /* see PRV_x */
 uint8_t fs;           /* MSTATUS_FS value */
@@ -1848,7 +1850,6 @@ void execute_instruction()
         return;
     }
 }
-
 /* returns realtime in nanoseconds */
 int64_t get_clock()
 {
@@ -1868,8 +1869,8 @@ void riscv_cpu_interp_x32()
          * counter */
         mtime = get_clock() / 100ll;
 
-        /* for reproducible debug runs, you can use a fixed fixed increment per
-         * instruction */
+        /* for reproducible debug runs, you can use a fixed fixed increment
+         * per instruction */
 #else
         mtime += 10;
 #endif
@@ -1893,8 +1894,7 @@ void riscv_cpu_interp_x32()
             execute_instruction();
         }
 
-        /* test for misaligned fetches */
-        if (next_pc & 3) {
+        if (next_pc & 0x3) {
             raise_exception(CAUSE_MISALIGNED_FETCH, next_pc);
         }
 
@@ -1915,20 +1915,68 @@ int main(int argc, char **argv)
 
     /* automatic STDOUT flushing, no fflush needed */
     setvbuf(stdout, NULL, _IONBF, 0);
-
     /* parse command line */
     const char *elf_file = NULL;
+    int output_flag = 0;
+    const char *output_file = NULL;
+    const char *elf_name = NULL;
     const char *signature_file = NULL;
+    int cmd_opt = 0;
+    int variant = -1;
+
     for (int i = 1; i < argc; i++) {
         char *arg = argv[i];
-        if (arg == strstr(arg, "+signature=")) {
-            signature_file = arg + 11;
-        } else if (arg[0] != '-') {
+        if (arg[0] != '-') {
             elf_file = arg;
         }
     }
     if (elf_file == NULL) {
-        printf("missing ELF file\n");
+        printf("Missing ELF File");
+    } else {
+        elf_name = strtok(strdup(elf_file), ".");
+        output_file = malloc(strlen(elf_name) + 30);
+        memset(output_file, '\0', strlen(elf_name) + 30);
+        strcat(output_file, elf_name);
+        strcat(output_file, ".signature.output");
+    }
+
+    struct option opts[] = {
+        {"elf", 1, NULL, 'e'},
+        {"signaturedump", 0, NULL, 's'},
+    };
+    const char *optstring = "e:s:o:";
+    while ((cmd_opt = getopt_long(argc, argv, optstring, opts, NULL)) != -1) {
+        switch (cmd_opt) {
+        case 'e':
+        case 'p':
+            elf_file = optarg;
+            elf_name = strtok(strdup(elf_file), ".");
+#ifdef DEBUG_EXTRA
+            printf("%s\n", elf_name);
+            printf("signature.output : %s\n", output_file);
+#endif
+            output_file = malloc(strlen(elf_name) + 30);
+            memset(output_file, '\0', strlen(elf_name) + 30);
+            strcat(output_file, elf_name);
+            strcat(output_file, ".signature.output");
+#ifdef DEBUG_EXTRA
+            printf("signature.output : %s\n", output_file);
+#endif
+            break;
+        case 'v':
+            // signature_file = optarg;
+            variant = 0;  // for RV32I
+            break;
+        case 's':
+            output_flag = 1;
+            break;
+        default:
+            printf("Unknow argument: %s\n", optarg);
+            break;
+        }
+    }
+    if (elf_file == NULL) {
+        printf("Missing ELF file\n");
         return 1;
     }
 
@@ -1992,9 +2040,11 @@ int main(int argc, char **argv)
     while ((scn = elf_nextscn(elf, scn)) != NULL) {
         gelf_getshdr(scn, &shdr);
         const char *name = elf_strptr(elf, shstrndx, shdr.sh_name);
-
         if (shdr.sh_type == SHT_PROGBITS) {
             if (strcmp(name, ".text") == 0) {
+                ram_start = shdr.sh_addr;
+                break;
+            } else if (strcmp(name, ".text.init") == 0) {
                 ram_start = shdr.sh_addr;
                 break;
             }
@@ -2019,7 +2069,8 @@ int main(int argc, char **argv)
                     ram_curr = shdr.sh_addr + i - ram_start;
                     if (ram_curr >= RAM_SIZE) {
                         debug_out(
-                            "memory pointer outside of range 0x%08x (section "
+                            "memory pointer outside of range 0x%08x "
+                            "(section "
                             "at address 0x%08x)\n",
                             ram_curr, (uint32_t) shdr.sh_addr);
                         /* break; */
@@ -2105,17 +2156,52 @@ int main(int argc, char **argv)
     uint64_t ns2 = get_clock();
 
     /* write signature */
+    /* Check signature */
     if (signature_file) {
-        FILE *sf = fopen(signature_file, "w");
+        FILE *sf = fopen(signature_file, "r");
+        if (sf == NULL) {
+            printf("Error opening file\n");
+            return -1;
+        }
         int size = end_signature - begin_signature;
-        for (int i = 0; i < size / 16; i++) {
-            for (int j = 0; j < 16; j++) {
-                fprintf(sf, "%02x", ram[begin_signature + 15 - j - ram_start]);
+        char temp[50], ans[50];
+        uint32_t tb = begin_signature;
+        int err = 0;
+        for (int i = 0; i < size / 4; i++) {
+            if (fgets(ans, 30, sf) == NULL)
+                break;
+            for (int j = 0; j < 4; j++) {
+                sprintf(temp + strlen(temp), "%02x",
+                        ram[tb + 3 - j - ram_start]);
             }
-            begin_signature += 16;
-            fprintf(sf, "\n");
+            tb += 4;
+            if (strncmp(temp, ans, 8) != 0) {
+                printf("%s -----> %s\n", temp, ans);
+                err++;
+            } else {
+                printf("%s\n", temp);
+            }
+            memset(temp, '\0', 50);
+        }
+        if (err == 0) {
+            printf("%s TEST PASSED\n", elf_file);
+        } else {
+            printf("%s TEST FAILED\n", elf_file);
+            printf("Number of failed signature : %d\n", err);
         }
         fclose(sf);
+    }
+    if (output_file) {
+        FILE *of = fopen(output_file, "w");
+        int size = end_signature - begin_signature;
+        for (int i = 0; i < size / 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                fprintf(of, "%02x", ram[begin_signature + 3 - j - ram_start]);
+            }
+            begin_signature += 4;
+            fprintf(of, "\n");
+        }
+        fclose(of);
     }
 
 #ifdef DEBUG_EXTRA

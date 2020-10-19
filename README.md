@@ -12,23 +12,29 @@ How to compile it:
 ```shell
 $ gcc -O3 -Wall emu-rv32i.c -o emu-rv32i -lelf
 ```
+or
+```shell
+$ make emu-rv32i
+```
 
-Run RV32I compliance tests.
+Passed RV32I compliance tests from https://github.com/riscv/riscv-compliance
+- Must install the [risc-v toolchain](https://xpack.github.io/riscv-none-embed-gcc/)
+```shell
+$ git clone https://github.com/riscv/riscv-compliance
+$ cd riscv-compliance
+$ make RISCV_PREFIX=riscv-none-embed- RISCV_DEVICE=rv32i TARGET_SIM=/abs/to/emu-rv32i RISCV_TARGET=rv32emu TARGETDIR=/abs/to/riscv-target variant
+```
+- Run RV32IMC compliance tests.
 Assume `emu-rv32i` in `$PATH` environment variable.
 ```shell
 $ git clone https://github.com/riscv/riscv-compliance
 $ cd riscv-compliance
-$ make RISCV_PREFIX=riscv-none-embed- RISCV_DEVICE=rv32i TARGET_SIM=emu-rv32i variant
+$ make RISCV_PREFIX=riscv-none-embed- RISCV_DEVICE=rv32imc TARGET_SIM=/abs/to/rv32emu/emu-rv32i RISCV_TARGET=rv32emu TARGETDIR=/abs/to/riscv-target variant
 ```
 
 Compiling and running simple code:
 ```shell
-$ riscv32-unknown-elf-gcc -O3 -nostdlib test1.c -o test1
-```
-
-or
-```shell
-$ riscv64-unknown-elf-gcc -march=rv32i -mabi=ilp32 -O3 -nostdlib test1.c -o test1
+$ make test1
 ```
 
 then
@@ -37,8 +43,17 @@ $ ./emu-rv32i test1
 Hello RISC-V!
 ```
 
-RV32M and RV32A instructions may be enabled by commenting `#define STRICT_RV32I`.
+- RV32M and RV32A instructions may be enabled by commenting `#define STRICT_RV32I`.
 
+
+Passed RV32C compliance tests from https://github.com/riscv/riscv-compliance
+```shell
+make C-ADDI.log
+```
+If there is no accident, it will output the `TEST PASSED`
+
+
+- RV32C instructions can be enabled by commenting `#define RV32C`
 ## How to build RISC-V toolchain from scratch
 
 https://github.com/riscv/riscv-gnu-toolchain

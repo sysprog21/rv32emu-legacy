@@ -1,2 +1,8 @@
 emu-rv32i
 test1
+sig.txt
+rom.v
+debug.txt
+# ignore generated files
+*.mem
+*.signature.output
