@@ -878,6 +878,7 @@ int target_write_u32(uint32_t addr, uint32_t val)
         return 1;
     }
     if (addr == MTIMECMP_ADDR) {
+        printf("%d", val);
         mtimecmp = (mtimecmp & 0xffffffff00000000ll) | val;
         mip &= ~MIP_MTIP;
     } else if (addr == MTIMECMP_ADDR + 4) {
